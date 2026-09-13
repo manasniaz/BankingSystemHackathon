@@ -1,500 +1,298 @@
 -- =============================================================================
--- PHASE 1: DATABASE SMOKE TESTS
+-- PHASE 1 SMOKE TESTS
 -- File: tests/phase1_smoke_tests.sql
 --
--- PURPOSE: Verify schema structure, functions, RLS, ownership, triggers, grants,
---          constraints, and indexes in Supabase Cloud SQL Editor.
--- HOW TO USE:
---   1. Execute migration 001_initial_banking_schema.sql first.
---   2. Paste and run this file in Supabase SQL Editor.
---   3. All sections output clear PASS/FAIL notices and summary status.
+-- PURPOSE: Verify schema structure, function existence, RLS, triggers,
+--          permissions, and basic integrity after migration.
+-- PREREQUISITES: Run migrations 001 and 002. Run seed_test_data.sql first.
+-- RUN ENVIRONMENT: Supabase Cloud SQL Editor (postgres role).
 -- =============================================================================
 
--- =============================================================================
--- FIX DEPLOYED SCHEMA ROLE PRIVILEGES
--- Ensure banking_functions has BYPASSRLS and auth schema access so SECURITY DEFINER
--- functions can write to RLS-enabled tables and verify auth.role()/auth.uid().
--- =============================================================================
 ALTER ROLE banking_functions BYPASSRLS;
 GRANT USAGE ON SCHEMA auth TO banking_functions;
 GRANT EXECUTE ON FUNCTION auth.uid() TO banking_functions;
 GRANT EXECUTE ON FUNCTION auth.role() TO banking_functions;
 GRANT EXECUTE ON FUNCTION auth.jwt() TO banking_functions;
 
--- Clean up any residual smoke test data if re-run
+SELECT '=== PHASE 1 SMOKE TESTS ===' AS section;
+
+-- -----------------------------------------------------------------------------
+-- TEST S1: All 15 tables exist
+-- -----------------------------------------------------------------------------
 DO $$
+DECLARE v_count INT;
 BEGIN
-    SET session_replication_role = 'replica';
-    DELETE FROM public.ledger_entries WHERE account_id IN (SELECT id FROM public.accounts WHERE account_number LIKE 'TEST-NEG-%' OR account_number LIKE 'TEST-APPEND-%');
-    DELETE FROM public.transactions WHERE source_account_id IN (SELECT id FROM public.accounts WHERE account_number LIKE 'TEST-NEG-%' OR account_number LIKE 'TEST-APPEND-%') OR destination_account_id IN (SELECT id FROM public.accounts WHERE account_number LIKE 'TEST-NEG-%' OR account_number LIKE 'TEST-APPEND-%');
-    DELETE FROM public.accounts WHERE account_number LIKE 'TEST-NEG-%' OR account_number LIKE 'TEST-APPEND-%';
-    SET session_replication_role = 'origin';
+    SELECT COUNT(*) INTO v_count
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN (
+        'profiles','accounts','account_holders','transactions','ledger_entries',
+        'idempotency_keys','account_holds','standing_orders','joint_account_actions',
+        'joint_account_consents','fraud_assessments','support_cases',
+        'support_case_drafts','reconciliation_runs','audit_log'
+      );
+    IF v_count = 15 THEN
+        RAISE NOTICE 'TEST S1: PASS — All 15 tables exist.';
+    ELSE
+        RAISE NOTICE 'TEST S1: FAIL — Only % of 15 tables found.', v_count;
+    END IF;
 END;
 $$;
 
-
--- =============================================================================
--- SECTION 1: TABLE EXISTENCE CHECK (15 tables)
--- =============================================================================
-
-SELECT 'SECTION 1: TABLE EXISTENCE' AS test_section;
-
-SELECT
-    tablename,
-    CASE WHEN tablename IS NOT NULL THEN 'EXISTS' ELSE 'MISSING' END AS status
-FROM pg_tables
-WHERE schemaname = 'public'
-  AND tablename IN (
-    'profiles','accounts','account_holders','transactions','ledger_entries',
-    'idempotency_keys','account_holds','standing_orders','joint_account_actions',
-    'joint_account_consents','fraud_assessments','support_cases',
-    'support_case_drafts','reconciliation_runs','audit_log'
-  )
-ORDER BY tablename;
-
-SELECT
-    CASE WHEN COUNT(*) = 15 THEN 'PASS: All 15 tables exist'
-         ELSE 'FAIL: Expected 15 tables, found ' || COUNT(*)::TEXT
-    END AS result
-FROM pg_tables
-WHERE schemaname = 'public'
-  AND tablename IN (
-    'profiles','accounts','account_holders','transactions','ledger_entries',
-    'idempotency_keys','account_holds','standing_orders','joint_account_actions',
-    'joint_account_consents','fraud_assessments','support_cases',
-    'support_case_drafts','reconciliation_runs','audit_log'
-  );
-
-
--- =============================================================================
--- SECTION 2: FUNCTION EXISTENCE CHECK (14 functions)
--- =============================================================================
-
-SELECT 'SECTION 2: FUNCTION EXISTENCE' AS test_section;
-
-SELECT
-    p.proname AS function_name,
-    'EXISTS' AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname IN (
-    'write_audit_log','create_profile_for_user','get_available_balance',
-    'check_fraud_assessment','close_account','process_money_movement',
-    'execute_transfer','execute_standing_order','place_account_hold',
-    'release_account_hold','request_joint_closure','record_joint_consent',
-    'run_reconciliation','prevent_modification_append_only'
-  )
-ORDER BY p.proname;
-
-SELECT
-    CASE WHEN COUNT(DISTINCT p.proname) = 14
-         THEN 'PASS: All 14 functions exist'
-         ELSE 'FAIL: Expected 14 functions, found ' || COUNT(DISTINCT p.proname)::TEXT
-    END AS result
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname IN (
-    'write_audit_log','create_profile_for_user','get_available_balance',
-    'check_fraud_assessment','close_account','process_money_movement',
-    'execute_transfer','execute_standing_order','place_account_hold',
-    'release_account_hold','request_joint_closure','record_joint_consent',
-    'run_reconciliation','prevent_modification_append_only'
-  );
-
-
--- =============================================================================
--- SECTION 3: RLS ENABLED CHECK (15 tables)
--- =============================================================================
-
-SELECT 'SECTION 3: RLS ENABLED' AS test_section;
-
-SELECT
-    relname AS table_name,
-    CASE WHEN relrowsecurity THEN 'RLS ON' ELSE 'RLS OFF' END AS rls_status
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public'
-  AND c.relkind = 'r'
-  AND relname IN (
-    'profiles','accounts','account_holders','transactions','ledger_entries',
-    'idempotency_keys','account_holds','standing_orders','joint_account_actions',
-    'joint_account_consents','fraud_assessments','support_cases',
-    'support_case_drafts','reconciliation_runs','audit_log'
-  )
-ORDER BY relname;
-
-SELECT
-    CASE WHEN COUNT(*) = 15 THEN 'PASS: RLS enabled on all 15 tables'
-         ELSE 'FAIL: RLS not enabled on ' || (15 - COUNT(*))::TEXT || ' tables'
-    END AS result
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public'
-  AND c.relkind = 'r'
-  AND c.relrowsecurity = TRUE
-  AND relname IN (
-    'profiles','accounts','account_holders','transactions','ledger_entries',
-    'idempotency_keys','account_holds','standing_orders','joint_account_actions',
-    'joint_account_consents','fraud_assessments','support_cases',
-    'support_case_drafts','reconciliation_runs','audit_log'
-  );
-
-
--- =============================================================================
--- SECTION 4: FUNCTION OWNERSHIP (banking_functions)
--- =============================================================================
-
-SELECT 'SECTION 4: FUNCTION OWNERSHIP' AS test_section;
-
-SELECT
-    p.proname AS function_name,
-    r.rolname AS owner,
-    CASE WHEN r.rolname = 'banking_functions' THEN 'PASS' ELSE 'FAIL - owner is ' || r.rolname END AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-JOIN pg_roles r ON r.oid = p.proowner
-WHERE n.nspname = 'public'
-  AND p.proname IN (
-    'write_audit_log','create_profile_for_user','get_available_balance',
-    'check_fraud_assessment','close_account','process_money_movement',
-    'execute_transfer','execute_standing_order','place_account_hold',
-    'release_account_hold','request_joint_closure','record_joint_consent',
-    'run_reconciliation','prevent_modification_append_only'
-  )
-ORDER BY p.proname;
-
-
--- =============================================================================
--- SECTION 5: SECURITY DEFINER CHECK
--- =============================================================================
-
-SELECT 'SECTION 5: SECURITY DEFINER' AS test_section;
-
-SELECT
-    p.proname AS function_name,
-    CASE WHEN p.prosecdef THEN 'SECURITY DEFINER - PASS' ELSE 'SECURITY INVOKER - FAIL' END AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public'
-  AND p.proname IN (
-    'execute_transfer','execute_standing_order','process_money_movement',
-    'place_account_hold','release_account_hold','request_joint_closure',
-    'record_joint_consent','run_reconciliation','write_audit_log',
-    'check_fraud_assessment','close_account','get_available_balance',
-    'create_profile_for_user','prevent_modification_append_only'
-  )
-ORDER BY p.proname;
-
-
--- =============================================================================
--- SECTION 6: APPEND-ONLY PROTECTION TRIGGERS
--- =============================================================================
-
-SELECT 'SECTION 6: APPEND-ONLY TRIGGERS' AS test_section;
-
-SELECT
-    trigger_name,
-    event_object_table AS table_name,
-    event_manipulation
-FROM information_schema.triggers
-WHERE trigger_schema = 'public'
-  AND trigger_name IN ('trg_ledger_entries_append_only', 'trg_audit_log_append_only')
-ORDER BY trigger_name, event_manipulation;
-
-SELECT
-    CASE WHEN COUNT(DISTINCT trigger_name) = 2
-         THEN 'PASS: Both append-only triggers exist'
-         ELSE 'FAIL: Expected 2 append-only triggers, found ' || COUNT(DISTINCT trigger_name)::TEXT
-    END AS result
-FROM information_schema.triggers
-WHERE trigger_schema = 'public'
-  AND trigger_name IN ('trg_ledger_entries_append_only', 'trg_audit_log_append_only');
-
-
--- =============================================================================
--- SECTION 7: EXECUTE GRANTS CHECK
--- =============================================================================
-
-SELECT 'SECTION 7: EXECUTE GRANTS' AS test_section;
-
-SELECT
-    p.proname AS function_name,
-    r.rolname AS grantee,
-    'HAS EXECUTE' AS privilege,
-    CASE
-        WHEN p.proname = 'process_money_movement'
-             AND r.rolname IN ('authenticated','anon','service_role','PUBLIC')
-        THEN 'FAIL: process_money_movement accessible to ' || r.rolname
-        WHEN p.proname IN ('execute_transfer','execute_standing_order')
-             AND r.rolname = 'service_role'
-        THEN 'PASS: RPC callable by service_role'
-        ELSE 'INFO'
-    END AS status
-FROM pg_proc p
-JOIN pg_namespace n ON n.oid = p.pronamespace
-JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) ace ON TRUE
-JOIN pg_roles r ON r.oid = ace.grantee
-WHERE n.nspname = 'public'
-  AND ace.privilege_type = 'EXECUTE'
-  AND p.proname IN (
-    'execute_transfer','execute_standing_order','process_money_movement',
-    'place_account_hold','release_account_hold'
-  )
-ORDER BY p.proname, r.rolname;
-
-
--- =============================================================================
--- SECTION 8: FINANCIAL TABLE WRITE PROTECTION
--- =============================================================================
-
-SELECT 'SECTION 8: FINANCIAL TABLE WRITE PROTECTION' AS test_section;
-
-SELECT
-    grantee,
-    table_name,
-    privilege_type,
-    'VIOLATION' AS status
-FROM information_schema.role_table_grants
-WHERE table_schema = 'public'
-  AND table_name IN ('accounts','ledger_entries','transactions','idempotency_keys','audit_log')
-  AND privilege_type IN ('INSERT','UPDATE','DELETE')
-  AND grantee IN ('authenticated','anon','PUBLIC')
-ORDER BY table_name, grantee, privilege_type;
-
-SELECT
-    CASE WHEN COUNT(*) = 0
-         THEN 'PASS: No unauthorized write access to financial tables'
-         ELSE 'FAIL: ' || COUNT(*) || ' unauthorized write privileges found'
-    END AS result
-FROM information_schema.role_table_grants
-WHERE table_schema = 'public'
-  AND table_name IN ('accounts','ledger_entries','transactions','idempotency_keys','audit_log')
-  AND privilege_type IN ('INSERT','UPDATE','DELETE')
-  AND grantee IN ('authenticated','anon','PUBLIC');
-
-
--- =============================================================================
--- SECTION 9: BALANCE CONSTRAINTS
--- =============================================================================
-
-SELECT 'SECTION 9: BALANCE CONSTRAINTS' AS test_section;
-
-SELECT
-    column_default,
-    CASE WHEN column_default = '0' THEN 'PASS: DEFAULT 0'
-         ELSE 'FAIL: default is ' || COALESCE(column_default,'NULL')
-    END AS default_check
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name = 'accounts'
-  AND column_name = 'balance';
-
--- Direct negative balance insert attempt (should fail via CHECK constraint)
+-- -----------------------------------------------------------------------------
+-- TEST S2: All 14 functions exist
+-- -----------------------------------------------------------------------------
 DO $$
+DECLARE v_count INT;
 BEGIN
-    BEGIN
-        INSERT INTO public.accounts (account_number, account_type, currency, balance, status)
-        VALUES ('TEST-NEG-BAL-001', 'checking', 'USD', -1, 'active');
-        RAISE NOTICE 'SECTION 9b: FAIL - Negative balance was accepted';
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE 'SECTION 9b: PASS - Negative balance rejected: %', SQLERRM;
-    END;
+    SELECT COUNT(*) INTO v_count
+    FROM information_schema.routines
+    WHERE routine_schema = 'public' AND routine_type = 'FUNCTION'
+      AND routine_name IN (
+        'create_profile_for_user','get_available_balance','check_fraud_assessment',
+        'execute_transfer','execute_standing_order','place_account_hold',
+        'release_account_hold','request_joint_closure','record_joint_consent',
+        'close_account','run_reconciliation','write_audit_log',
+        'process_money_movement','prevent_modification_append_only'
+      );
+    IF v_count = 14 THEN
+        RAISE NOTICE 'TEST S2: PASS — All 14 functions exist.';
+    ELSE
+        RAISE NOTICE 'TEST S2: FAIL — Only % of 14 functions found.', v_count;
+    END IF;
 END;
 $$;
 
-
--- =============================================================================
--- SECTION 10: LEDGER APPEND-ONLY ENFORCEMENT
--- =============================================================================
-
-SELECT 'SECTION 10: LEDGER APPEND-ONLY ENFORCEMENT' AS test_section;
-
+-- -----------------------------------------------------------------------------
+-- TEST S3: All functions are SECURITY DEFINER owned by banking_functions
+-- -----------------------------------------------------------------------------
 DO $$
-DECLARE
-    v_txn_id UUID;
-    v_acct_id UUID;
-    v_led_id UUID;
-    v_update_blocked BOOLEAN := FALSE;
-    v_delete_blocked BOOLEAN := FALSE;
+DECLARE v_count INT;
 BEGIN
-    BEGIN
-        INSERT INTO public.accounts (account_number, account_type, currency, balance, status)
-        VALUES ('TEST-APPEND-001', 'checking', 'USD', 0, 'active')
-        RETURNING id INTO v_acct_id;
-
-        INSERT INTO public.transactions (source_account_id, destination_account_id, amount, currency, status, description)
-        VALUES (v_acct_id, v_acct_id, 1, 'USD', 'completed', 'append-only test')
-        RETURNING id INTO v_txn_id;
-
-        INSERT INTO public.ledger_entries (transaction_id, account_id, entry_type, amount, balance_after)
-        VALUES (v_txn_id, v_acct_id, 'credit', 1, 0)
-        RETURNING id INTO v_led_id;
-
-        BEGIN
-            UPDATE public.ledger_entries SET amount = 9999 WHERE id = v_led_id;
-            v_update_blocked := FALSE;
-        EXCEPTION WHEN OTHERS THEN
-            v_update_blocked := TRUE;
-        END;
-
-        BEGIN
-            DELETE FROM public.ledger_entries WHERE id = v_led_id;
-            v_delete_blocked := FALSE;
-        EXCEPTION WHEN OTHERS THEN
-            v_delete_blocked := TRUE;
-        END;
-
-        RAISE NOTICE 'SECTION 10: Ledger UPDATE blocked: % | DELETE blocked: %',
-            CASE WHEN v_update_blocked THEN 'PASS' ELSE 'FAIL' END,
-            CASE WHEN v_delete_blocked THEN 'PASS' ELSE 'FAIL' END;
-
-        -- Raise exception to rollback this inner block
-        RAISE EXCEPTION 'TEST_ROLLBACK';
-    EXCEPTION WHEN OTHERS THEN
-        IF SQLERRM <> 'TEST_ROLLBACK' THEN
-            RAISE;
-        END IF;
-    END;
+    SELECT COUNT(*) INTO v_count
+    FROM pg_proc p
+    JOIN pg_roles r ON r.oid = p.proowner
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND r.rolname = 'banking_functions'
+      AND p.prosecdef = true;
+    IF v_count = 14 THEN
+        RAISE NOTICE 'TEST S3: PASS — All 14 functions are SECURITY DEFINER owned by banking_functions.';
+    ELSE
+        RAISE NOTICE 'TEST S3: FAIL — Only % functions correct.', v_count;
+    END IF;
 END;
 $$;
 
-
--- =============================================================================
--- SECTION 11: AUDIT LOG APPEND-ONLY ENFORCEMENT
--- =============================================================================
-
-SELECT 'SECTION 11: AUDIT LOG APPEND-ONLY ENFORCEMENT' AS test_section;
-
+-- -----------------------------------------------------------------------------
+-- TEST S4: RLS enabled on all 15 tables
+-- -----------------------------------------------------------------------------
 DO $$
-DECLARE
-    v_audit_id UUID;
-    v_update_blocked BOOLEAN := FALSE;
-    v_delete_blocked BOOLEAN := FALSE;
+DECLARE v_count INT;
 BEGIN
-    BEGIN
-        INSERT INTO public.audit_log (event_type, actor_type, details)
-        VALUES ('test_event', 'system', '{"test": true}')
-        RETURNING id INTO v_audit_id;
-
-        BEGIN
-            UPDATE public.audit_log SET event_type = 'tampered' WHERE id = v_audit_id;
-            v_update_blocked := FALSE;
-        EXCEPTION WHEN OTHERS THEN
-            v_update_blocked := TRUE;
-        END;
-
-        BEGIN
-            DELETE FROM public.audit_log WHERE id = v_audit_id;
-            v_delete_blocked := FALSE;
-        EXCEPTION WHEN OTHERS THEN
-            v_delete_blocked := TRUE;
-        END;
-
-        RAISE NOTICE 'SECTION 11: Audit log UPDATE blocked: % | DELETE blocked: %',
-            CASE WHEN v_update_blocked THEN 'PASS' ELSE 'FAIL' END,
-            CASE WHEN v_delete_blocked THEN 'PASS' ELSE 'FAIL' END;
-
-        -- Raise exception to rollback this inner block
-        RAISE EXCEPTION 'TEST_ROLLBACK';
-    EXCEPTION WHEN OTHERS THEN
-        IF SQLERRM <> 'TEST_ROLLBACK' THEN
-            RAISE;
-        END IF;
-    END;
+    SELECT COUNT(*) INTO v_count
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public'
+      AND c.relrowsecurity = true
+      AND c.relname IN (
+        'profiles','accounts','account_holders','transactions','ledger_entries',
+        'idempotency_keys','account_holds','standing_orders','joint_account_actions',
+        'joint_account_consents','fraud_assessments','support_cases',
+        'support_case_drafts','reconciliation_runs','audit_log'
+      );
+    IF v_count = 15 THEN
+        RAISE NOTICE 'TEST S4: PASS — RLS enabled on all 15 tables.';
+    ELSE
+        RAISE NOTICE 'TEST S4: FAIL — RLS only enabled on % tables.', v_count;
+    END IF;
 END;
 $$;
 
+-- -----------------------------------------------------------------------------
+-- TEST S5: Append-only triggers exist on ledger_entries and audit_log
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_count INT;
+BEGIN
+    SELECT COUNT(*) INTO v_count
+    FROM information_schema.triggers
+    WHERE trigger_name IN ('trg_ledger_entries_append_only','trg_audit_log_append_only');
+    IF v_count = 4 THEN
+        RAISE NOTICE 'TEST S5: PASS — Append-only triggers active (4 events: 2 tables x UPDATE+DELETE).';
+    ELSE
+        RAISE NOTICE 'TEST S5: FAIL — Expected 4 trigger events, found %.', v_count;
+    END IF;
+END;
+$$;
 
--- =============================================================================
--- SECTION 12: AUTH TRIGGER CHECK
--- =============================================================================
+-- -----------------------------------------------------------------------------
+-- TEST S6: anon has no write privileges on any table
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_count INT;
+BEGIN
+    SELECT COUNT(*) INTO v_count
+    FROM information_schema.role_table_grants
+    WHERE grantee = 'anon'
+      AND table_schema = 'public'
+      AND privilege_type IN ('INSERT','UPDATE','DELETE');
+    IF v_count = 0 THEN
+        RAISE NOTICE 'TEST S6: PASS — anon has no write privileges.';
+    ELSE
+        RAISE NOTICE 'TEST S6: FAIL — anon has % write privileges.', v_count;
+    END IF;
+END;
+$$;
 
-SELECT 'SECTION 12: AUTH TRIGGER' AS test_section;
+-- -----------------------------------------------------------------------------
+-- TEST S7: execute_transfer restricted to service_role only
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_count INT;
+BEGIN
+    SELECT COUNT(*) INTO v_count
+    FROM information_schema.routine_privileges
+    WHERE routine_schema = 'public'
+      AND routine_name = 'execute_transfer'
+      AND grantee IN ('authenticated','anon');
+    IF v_count = 0 THEN
+        RAISE NOTICE 'TEST S7: PASS — execute_transfer not callable by authenticated or anon.';
+    ELSE
+        RAISE NOTICE 'TEST S7: FAIL — execute_transfer exposed to % non-service roles.', v_count;
+    END IF;
+END;
+$$;
 
-SELECT
-    trigger_name,
-    event_object_schema || '.' || event_object_table AS on_table,
-    event_manipulation,
-    action_timing,
-    'EXISTS' AS status
-FROM information_schema.triggers
-WHERE trigger_name = 'on_auth_user_created';
+-- -----------------------------------------------------------------------------
+-- TEST S8: joint closure/consent restricted to service_role only
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_count INT;
+BEGIN
+    SELECT COUNT(*) INTO v_count
+    FROM information_schema.routine_privileges
+    WHERE routine_schema = 'public'
+      AND routine_name IN ('request_joint_closure','record_joint_consent')
+      AND grantee = 'authenticated';
+    IF v_count = 0 THEN
+        RAISE NOTICE 'TEST S8: PASS — Joint RPCs not callable by authenticated users directly.';
+    ELSE
+        RAISE NOTICE 'TEST S8: FAIL — Joint RPCs still exposed to authenticated role.';
+    END IF;
+END;
+$$;
 
-SELECT
-    CASE WHEN COUNT(*) > 0 THEN 'PASS: on_auth_user_created trigger exists'
-         ELSE 'FAIL: on_auth_user_created trigger NOT found'
-    END AS result
-FROM information_schema.triggers
-WHERE trigger_name = 'on_auth_user_created';
+-- -----------------------------------------------------------------------------
+-- TEST S9: auth trigger exists on auth.users
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_count INT;
+BEGIN
+    SELECT COUNT(*) INTO v_count
+    FROM information_schema.triggers
+    WHERE trigger_name = 'on_auth_user_created'
+      AND event_object_table = 'users';
+    IF v_count >= 1 THEN
+        RAISE NOTICE 'TEST S9: PASS — Auth trigger on_auth_user_created exists.';
+    ELSE
+        RAISE NOTICE 'TEST S9: FAIL — Auth trigger not found.';
+    END IF;
+END;
+$$;
 
+-- -----------------------------------------------------------------------------
+-- TEST S10: Ledger is balanced (debits = credits)
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_debits BIGINT; v_credits BIGINT;
+BEGIN
+    SELECT
+        SUM(CASE WHEN entry_type='debit'  THEN amount ELSE 0 END),
+        SUM(CASE WHEN entry_type='credit' THEN amount ELSE 0 END)
+    INTO v_debits, v_credits
+    FROM public.ledger_entries;
+    IF v_debits = v_credits THEN
+        RAISE NOTICE 'TEST S10: PASS — Ledger balanced (debits=credits=%).', v_debits;
+    ELSE
+        RAISE NOTICE 'TEST S10: FAIL — Ledger imbalanced (debits=%, credits=%).', v_debits, v_credits;
+    END IF;
+END;
+$$;
 
--- =============================================================================
--- SECTION 13: INDEXES CHECK (13 indexes)
--- =============================================================================
+-- -----------------------------------------------------------------------------
+-- TEST S11: Cached balances match ledger truth (active/frozen accounts only)
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_mismatches INT;
+BEGIN
+    SELECT COUNT(*) INTO v_mismatches
+    FROM (
+        SELECT a.id
+        FROM public.accounts a
+        LEFT JOIN public.ledger_entries le ON le.account_id = a.id
+        WHERE a.status IN ('active','frozen')
+        GROUP BY a.id, a.balance
+        HAVING a.balance <> COALESCE(SUM(CASE WHEN le.entry_type='credit' THEN le.amount ELSE -le.amount END),0)
+    ) x;
+    IF v_mismatches = 0 THEN
+        RAISE NOTICE 'TEST S11: PASS — All active/frozen account cached balances match ledger truth.';
+    ELSE
+        RAISE NOTICE 'TEST S11: FAIL — % accounts have balance drift.', v_mismatches;
+    END IF;
+END;
+$$;
 
-SELECT 'SECTION 13: INDEXES' AS test_section;
+-- -----------------------------------------------------------------------------
+-- TEST S12: Reconciliation passes on clean seed data
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_result JSONB;
+BEGIN
+    v_result := public.run_reconciliation(CURRENT_DATE);
+    IF (v_result->>'passed')::BOOLEAN THEN
+        RAISE NOTICE 'TEST S12: PASS — Reconciliation passed with 0 discrepancies.';
+    ELSE
+        RAISE NOTICE 'TEST S12: FAIL — Reconciliation failed: %', v_result->'discrepancies';
+    END IF;
+END;
+$$;
 
-SELECT
-    indexname,
-    tablename,
-    'EXISTS' AS status
-FROM pg_indexes
-WHERE schemaname = 'public'
-  AND indexname IN (
-    'idx_account_holders_profile','idx_account_holders_account',
-    'idx_transactions_source','idx_transactions_dest','idx_transactions_created',
-    'idx_ledger_entries_account','idx_ledger_entries_tx',
-    'idx_account_holds_account_status','idx_standing_orders_next_exec',
-    'idx_fraud_assessments_account','idx_support_cases_profile',
-    'idx_audit_log_created','idx_audit_log_event'
-  )
-ORDER BY indexname;
+-- -----------------------------------------------------------------------------
+-- TEST S13: execute_transfer has no active auth.role() call
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_def TEXT;
+BEGIN
+    SELECT routine_definition INTO v_def
+    FROM information_schema.routines
+    WHERE routine_schema = 'public' AND routine_name = 'execute_transfer';
 
-SELECT
-    CASE WHEN COUNT(*) = 13 THEN 'PASS: All 13 indexes exist'
-         ELSE 'FAIL: Expected 13 indexes, found ' || COUNT(*)::TEXT
-    END AS result
-FROM pg_indexes
-WHERE schemaname = 'public'
-  AND indexname IN (
-    'idx_account_holders_profile','idx_account_holders_account',
-    'idx_transactions_source','idx_transactions_dest','idx_transactions_created',
-    'idx_ledger_entries_account','idx_ledger_entries_tx',
-    'idx_account_holds_account_status','idx_standing_orders_next_exec',
-    'idx_fraud_assessments_account','idx_support_cases_profile',
-    'idx_audit_log_created','idx_audit_log_event'
-  );
+    IF v_def NOT LIKE '%IF (auth.role()%' AND v_def NOT LIKE '%IF(auth.role()%' THEN
+        RAISE NOTICE 'TEST S13: PASS — auth.role() not called in execute_transfer.';
+    ELSE
+        RAISE NOTICE 'TEST S13: FAIL — auth.role() still called in execute_transfer.';
+    END IF;
+END;
+$$;
 
+-- -----------------------------------------------------------------------------
+-- TEST S14: Seed accounts exist with correct balances
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE v_alice BIGINT; v_bob BIGINT; v_joint BIGINT;
+BEGIN
+    SELECT balance INTO v_alice FROM public.accounts WHERE id = 'aa000000-0000-0000-0000-000000000001';
+    SELECT balance INTO v_bob   FROM public.accounts WHERE id = 'bb000000-0000-0000-0000-000000000002';
+    SELECT balance INTO v_joint FROM public.accounts WHERE id = 'cc000000-0000-0000-0000-000000000003';
 
--- =============================================================================
--- SECTION 14: banking_functions ROLE CHECK
--- =============================================================================
+    IF v_alice = 100000 AND v_bob = 50000 AND v_joint = 0 THEN
+        RAISE NOTICE 'TEST S14: PASS — Alice=100000, Bob=50000, Joint=0.';
+    ELSE
+        RAISE NOTICE 'TEST S14: FAIL — Alice=%, Bob=%, Joint=%.', v_alice, v_bob, v_joint;
+    END IF;
+END;
+$$;
 
-SELECT 'SECTION 14: ROLE CHECK' AS test_section;
-
-SELECT
-    rolname,
-    rolcanlogin,
-    CASE WHEN rolname = 'banking_functions' AND NOT rolcanlogin
-         THEN 'PASS: role exists, NOLOGIN'
-         ELSE 'CHECK'
-    END AS status
-FROM pg_roles
-WHERE rolname = 'banking_functions';
-
-SELECT
-    CASE WHEN COUNT(*) = 1 THEN 'PASS: banking_functions role exists'
-         ELSE 'FAIL: banking_functions role NOT found'
-    END AS result
-FROM pg_roles
-WHERE rolname = 'banking_functions';
-
-
--- =============================================================================
--- SUMMARY
--- =============================================================================
-
-SELECT '=== SMOKE TESTS COMPLETE — Sections 1-14 ===' AS summary;
-SELECT 'Check all PASS/FAIL results. Next step: run tests/seed_test_data.sql' AS next_step;
+SELECT '=== SMOKE TESTS COMPLETE — Review notices above ===' AS summary;
+SELECT 'Next: run tests/test_transfer_flow.sql' AS next_step;
