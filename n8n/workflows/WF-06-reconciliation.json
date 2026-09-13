@@ -1,0 +1,263 @@
+{
+  "name": "WF-06 Nightly Reconciliation & Ledger Verification",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-reconciliation",
+      "name": "Schedule - Nightly Reconciliation",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const today = new Date().toISOString().split('T')[0];\nreturn [{ json: { target_date: today } }];"
+      },
+      "id": "node-format-date",
+      "name": "Format Run Date",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/run_reconciliation",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_run_date\": \"{{ $json.target_date }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-execute-reconciliation-rpc",
+      "name": "Execute Supabase RPC run_reconciliation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.passed === true }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-reconciliation-passed",
+      "name": "Reconciliation Passed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status_summary",
+              "name": "summary",
+              "type": "string",
+              "value": "=Reconciliation PASSED for {{ $json.run_date }}. Total System Debits: {{ $json.total_debits }}, Total System Credits: {{ $json.total_credits }}."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-log-success",
+      "name": "Log Successful Reconciliation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "alert_title",
+              "name": "alert_title",
+              "type": "string",
+              "value": "=CRITICAL: Financial Reconciliation Mismatch Detected for {{ $json.run_date }}"
+            },
+            {
+              "id": "discrepancies",
+              "name": "discrepancies",
+              "type": "array",
+              "value": "={{ $json.discrepancies }}"
+            },
+            {
+              "id": "total_debits",
+              "name": "total_debits",
+              "type": "number",
+              "value": "={{ $json.total_debits }}"
+            },
+            {
+              "id": "total_credits",
+              "name": "total_credits",
+              "type": "number",
+              "value": "={{ $json.total_credits }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-format-discrepancy-alert",
+      "name": "Format Discrepancy Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.ALERT_WEBHOOK_URL || $vars.SUPABASE_URL + '/rest/v1/audit_log' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"reconciliation_discrepancy_alert\",\n  \"actor_type\": \"n8n\",\n  \"target_type\": \"reconciliation_run\",\n  \"target_id\": \"{{ $('Execute Supabase RPC run_reconciliation').item.json.reconciliation_id }}\",\n  \"details\": {\n    \"run_date\": \"{{ $('Execute Supabase RPC run_reconciliation').item.json.run_date }}\",\n    \"discrepancies\": {{ JSON.stringify($('Execute Supabase RPC run_reconciliation').item.json.discrepancies) }},\n    \"total_debits\": {{ $('Execute Supabase RPC run_reconciliation').item.json.total_debits }},\n    \"total_credits\": {{ $('Execute Supabase RPC run_reconciliation').item.json.total_credits }},\n    \"requires_human_review\": true\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-send-ops-alert",
+      "name": "Dispatch Reconciliation Mismatch Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        400
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule - Nightly Reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Format Run Date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Run Date": {
+      "main": [
+        [
+          {
+            "node": "Execute Supabase RPC run_reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Supabase RPC run_reconciliation": {
+      "main": [
+        [
+          {
+            "node": "Reconciliation Passed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reconciliation Passed?": {
+      "main": [
+        [
+          {
+            "node": "Log Successful Reconciliation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Discrepancy Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Discrepancy Alert": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Reconciliation Mismatch Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f6a7b8c9-d0e1-42f3-a4b5-667788990011",
+  "meta": {
+    "templateId": "wf-06-reconciliation"
+  },
+  "id": "WF-06-reconciliation",
+  "tags": []
+}

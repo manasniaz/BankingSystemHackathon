@@ -72,8 +72,6 @@
       "parameters": {
         "method": "POST",
         "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/execute_transfer",
-        "authentication": "genericCredentialType",
-        "genericCredentialType": "httpCustomAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -101,13 +99,7 @@
       "position": [
         800,
         300
-      ],
-      "credentials": {
-        "httpCustomAuth": {
-          "id": "supabase-service-role-custom-auth",
-          "name": "Supabase Service Role Credential"
-        }
-      }
+      ]
     },
     {
       "parameters": {

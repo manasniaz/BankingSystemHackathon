@@ -1,0 +1,354 @@
+{
+  "name": "WF-02 Standing Order Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-trigger",
+      "name": "Schedule - Hourly Standing Order Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/standing_orders",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "eq.active"
+            },
+            {
+              "name": "next_execution_at",
+              "value": "=lte.{{ $now.toISOString() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fetch-due-orders",
+      "name": "Fetch Due Standing Orders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Array.isArray($input.all()) && $input.all().length > 0 && !!$input.first().json.id }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-orders-exist",
+      "name": "Any Orders Due?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "node-split-orders",
+      "name": "Process Orders One By One",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/execute_standing_order",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_standing_order_id\": \"{{ $json.id }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-execute-rpc",
+      "name": "Execute Supabase RPC execute_standing_order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success === true }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-execution-result",
+      "name": "Check Execution Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.status === 'failed' || ($json.retry_count !== undefined && $json.retry_count >= 3) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-permanent-failure",
+      "name": "Permanent Failure?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1400,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "alert_msg",
+              "name": "alert_summary",
+              "type": "string",
+              "value": "=CRITICAL: Standing order {{ $json.standing_order_id || 'unknown' }} failed permanently after {{ $json.retry_count || 3 }} retries. Reason: {{ $json.error || 'Unknown error' }}"
+            },
+            {
+              "id": "standing_order_id",
+              "name": "standing_order_id",
+              "type": "string",
+              "value": "={{ $json.standing_order_id }}"
+            },
+            {
+              "id": "error_reason",
+              "name": "error",
+              "type": "string",
+              "value": "={{ $json.error }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-format-permanent-failure-alert",
+      "name": "Format Permanent Failure Alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1600,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.ALERT_WEBHOOK_URL || $vars.SUPABASE_URL + '/rest/v1/audit_log' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event_type\": \"standing_order_permanent_failure_alert\",\n  \"actor_type\": \"n8n\",\n  \"target_type\": \"standing_order\",\n  \"target_id\": \"{{ $json.standing_order_id }}\",\n  \"details\": {\n    \"alert_summary\": \"{{ $json.alert_summary }}\",\n    \"error\": \"{{ $json.error }}\"\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-dispatch-failure-alert",
+      "name": "Dispatch Alert Delivery Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        320
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule - Hourly Standing Order Check": {
+      "main": [
+        [
+          {
+            "node": "Fetch Due Standing Orders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Due Standing Orders": {
+      "main": [
+        [
+          {
+            "node": "Any Orders Due?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Orders Due?": {
+      "main": [
+        [
+          {
+            "node": "Process Orders One By One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Orders One By One": {
+      "main": [
+        [
+          {
+            "node": "Execute Supabase RPC execute_standing_order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Supabase RPC execute_standing_order": {
+      "main": [
+        [
+          {
+            "node": "Check Execution Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Execution Result": {
+      "main": [
+        [
+          {
+            "node": "Process Orders One By One",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Permanent Failure?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Permanent Failure?": {
+      "main": [
+        [
+          {
+            "node": "Format Permanent Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Orders One By One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Permanent Failure Alert": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Alert Delivery Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Alert Delivery Notification": {
+      "main": [
+        [
+          {
+            "node": "Process Orders One By One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b2c3d4e5-f6a7-48b9-c0d1-223344556677",
+  "meta": {
+    "templateId": "wf-02-standing-order"
+  },
+  "id": "WF-02-standing-order-scheduler",
+  "tags": []
+}

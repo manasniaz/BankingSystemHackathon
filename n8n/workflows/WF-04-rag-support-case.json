@@ -1,0 +1,544 @@
+{
+  "name": "WF-04 RAG Support Case Handling",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "support-case",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-support",
+      "name": "Webhook - New Support Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "wf-04-support-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nif (!body.profile_id || !uuidRegex.test(body.profile_id)) {\n  return [{ json: { isValid: false, validationError: 'profile_id must be a valid UUID' } }];\n}\nif (!body.subject || typeof body.subject !== 'string' || body.subject.trim() === '') {\n  return [{ json: { isValid: false, validationError: 'subject is required' } }];\n}\nif (!body.inquiry || typeof body.inquiry !== 'string' || body.inquiry.trim() === '') {\n  return [{ json: { isValid: false, validationError: 'inquiry text is required' } }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    params: {\n      profile_id: String(body.profile_id).trim(),\n      customer_email: body.customer_email ? String(body.customer_email).trim() : null,\n      subject: String(body.subject).trim(),\n      inquiry: String(body.inquiry).trim()\n    }\n  }\n}];"
+      },
+      "id": "node-validate-payload",
+      "name": "Validate Support Request Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isValid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-validity",
+      "name": "Check Payload Validity",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": {{ JSON.stringify($json.validationError) }},\n  \"code\": \"INVALID_INPUT\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "node-respond-400",
+      "name": "Respond 400 - Invalid Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        600,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_cases",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"profile_id\": \"{{ $json.params.profile_id }}\",\n  \"subject\": \"{{ $json.params.subject }}\",\n  \"inquiry\": \"{{ $json.params.inquiry }}\",\n  \"status\": \"open\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-create-support-case",
+      "name": "Create Support Case in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.EMBEDDING_SERVICE_URL || 'https://api.openai.com/v1/embeddings' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"input\": \"{{ $('Validate Support Request Payload').item.json.params.inquiry }}\",\n  \"model\": \"text-embedding-3-small\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-generate-embedding",
+      "name": "Generate Inquiry Embedding Vector",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.PINECONE_INDEX_URL }}/query",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vector\": {{ JSON.stringify($json.data && $json.data[0] ? $json.data[0].embedding : ($json.embedding || [])) }},\n  \"topK\": 3,\n  \"includeMetadata\": true,\n  \"namespace\": \"banking_policy\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-query-pinecone",
+      "name": "Query Pinecone Vector Index",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const matches = $input.first().json.matches || [];\nlet maxScore = 0;\nconst docIds = [];\nconst scores = [];\nlet contextText = '';\n\nfor (const match of matches) {\n  const score = match.score || 0;\n  if (score > maxScore) maxScore = score;\n  if (match.id) docIds.push(match.id);\n  scores.push(score);\n  if (match.metadata && match.metadata.text) {\n    contextText += `[Doc ${match.id}]: ${match.metadata.text}\\n\\n`;\n  }\n}\n\nconst THRESHOLD = 0.75;\nconst thresholdExceeded = (matches.length > 0) && (maxScore >= THRESHOLD);\n\nreturn [{\n  json: {\n    max_score: maxScore,\n    threshold_exceeded: thresholdExceeded,\n    doc_ids: docIds,\n    scores: scores,\n    context_text: contextText,\n    inquiry: $('Validate Support Request Payload').item.json.params.inquiry,\n    subject: $('Validate Support Request Payload').item.json.params.subject,\n    case_id: $('Create Support Case in Supabase').item.json[0] ? $('Create Support Case in Supabase').item.json[0].id : $('Create Support Case in Supabase').item.json.id\n  }\n}];"
+      },
+      "id": "node-evaluate-similarity",
+      "name": "Evaluate Similarity & Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.threshold_exceeded }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-check-threshold-exceeded",
+      "name": "Similarity Threshold Met? (>= 0.75)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.1,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a professional banking customer support drafting assistant. STRICT RULES: (1) Use ONLY facts present in the retrieved policy context provided. (2) Never invent policies, limits, fees, or SLA timeframes. (3) State facts clearly. Draft a polite email response for human review.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Customer Inquiry: {{ $json.inquiry }}\\n\\nRetrieved Policy Context:\\n{{ $json.context_text }}\"\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-groq-draft-generation",
+      "name": "Generate Policy Grounded Draft via Groq",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "draft_text",
+              "name": "groq_draft",
+              "type": "string",
+              "value": "={{ $json.choices && $json.choices[0] ? $json.choices[0].message.content : 'Draft generation pending review.' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-format-groq-draft",
+      "name": "Format Groq Draft Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fallback_draft",
+              "name": "groq_draft",
+              "type": "string",
+              "value": "=Thank you for contacting bank support regarding: \"{{ $json.subject }}\". Your inquiry requires specialist verification. Our customer support team has received your request and a specialist will respond shortly."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-fallback-draft-generation",
+      "name": "Insufficient Policy Fallback Draft",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_case_drafts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"support_case_id\": \"{{ $('Evaluate Similarity & Context').item.json.case_id }}\",\n  \"rag_doc_ids\": {{ JSON.stringify($('Evaluate Similarity & Context').item.json.doc_ids) }},\n  \"similarity_scores\": {{ JSON.stringify($('Evaluate Similarity & Context').item.json.scores) }},\n  \"confidence_score\": {{ $('Evaluate Similarity & Context').item.json.max_score }},\n  \"threshold_exceeded\": {{ $('Evaluate Similarity & Context').item.json.threshold_exceeded }},\n  \"groq_draft\": {{ JSON.stringify($json.groq_draft) }},\n  \"human_review_state\": \"pending\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-save-support-case-draft",
+      "name": "Save Support Case Draft in Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_cases?id=eq.{{ $('Evaluate Similarity & Context').item.json.case_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"status\": \"awaiting_human_review\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node-update-case-status",
+      "name": "Update Case Status to Awaiting Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"support_case_id\": \"{{ $('Evaluate Similarity & Context').item.json.case_id }}\",\n  \"status\": \"awaiting_human_review\",\n  \"threshold_exceeded\": {{ $('Evaluate Similarity & Context').item.json.threshold_exceeded }},\n  \"confidence_score\": {{ $('Evaluate Similarity & Context').item.json.max_score }}\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-respond-200-case-created",
+      "name": "Respond 200 - Case Created & Draft Saved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2600,
+        300
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - New Support Request": {
+      "main": [
+        [
+          {
+            "node": "Validate Support Request Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Support Request Payload": {
+      "main": [
+        [
+          {
+            "node": "Check Payload Validity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Payload Validity": {
+      "main": [
+        [
+          {
+            "node": "Create Support Case in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 - Invalid Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Support Case in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Generate Inquiry Embedding Vector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Inquiry Embedding Vector": {
+      "main": [
+        [
+          {
+            "node": "Query Pinecone Vector Index",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Pinecone Vector Index": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Similarity & Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Similarity & Context": {
+      "main": [
+        [
+          {
+            "node": "Similarity Threshold Met? (>= 0.75)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Similarity Threshold Met? (>= 0.75)": {
+      "main": [
+        [
+          {
+            "node": "Generate Policy Grounded Draft via Groq",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insufficient Policy Fallback Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Policy Grounded Draft via Groq": {
+      "main": [
+        [
+          {
+            "node": "Format Groq Draft Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Groq Draft Output": {
+      "main": [
+        [
+          {
+            "node": "Save Support Case Draft in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insufficient Policy Fallback Draft": {
+      "main": [
+        [
+          {
+            "node": "Save Support Case Draft in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Support Case Draft in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Update Case Status to Awaiting Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Case Status to Awaiting Review": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 - Case Created & Draft Saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d4e5f6a7-b8c9-40d1-e2f3-445566778899",
+  "meta": {
+    "templateId": "wf-04-rag-support-case"
+  },
+  "id": "WF-04-rag-support-case",
+  "tags": []
+}
