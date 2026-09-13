@@ -16,7 +16,10 @@
       "name": "Schedule - Nightly Reconciliation",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [200, 300]
+      "position": [
+        200,
+        300
+      ]
     },
     {
       "parameters": {
@@ -26,14 +29,15 @@
       "name": "Format Run Date",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [400, 300]
+      "position": [
+        400,
+        300
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/run_reconciliation",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -58,28 +62,18 @@
       "name": "Execute Supabase RPC run_reconciliation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [600, 300]
+      "position": [
+        600,
+        300
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "combinator": "and",
-          "conditions": [
+          "boolean": [
             {
-              "id": "recon-passed",
-              "leftValue": "={{ $json.passed === true }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
+              "value1": "={{ $json.passed === true }}",
+              "value2": true
             }
           ]
         }
@@ -87,8 +81,11 @@
       "id": "node-check-reconciliation-passed",
       "name": "Reconciliation Passed?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [800, 300]
+      "typeVersion": 1,
+      "position": [
+        800,
+        300
+      ]
     },
     {
       "parameters": {
@@ -108,7 +105,10 @@
       "name": "Log Successful Reconciliation",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1000, 200]
+      "position": [
+        1000,
+        200
+      ]
     },
     {
       "parameters": {
@@ -137,18 +137,6 @@
               "name": "total_credits",
               "type": "number",
               "value": "={{ $json.total_credits }}"
-            },
-            {
-              "id": "reconciliation_id",
-              "name": "reconciliation_id",
-              "type": "string",
-              "value": "={{ $json.reconciliation_id }}"
-            },
-            {
-              "id": "run_date",
-              "name": "run_date",
-              "type": "string",
-              "value": "={{ $json.run_date }}"
             }
           ]
         },
@@ -158,12 +146,15 @@
       "name": "Format Discrepancy Alert",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1000, 400]
+      "position": [
+        1000,
+        400
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.ALERT_WEBHOOK_URL }}",
+        "url": "={{ $vars.ALERT_WEBHOOK_URL || $vars.SUPABASE_URL + '/rest/v1/audit_log' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -175,7 +166,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"event_type\": \"reconciliation_discrepancy_alert\",\n  \"actor_type\": \"n8n\",\n  \"target_type\": \"reconciliation_run\",\n  \"target_id\": \"{{ $json.reconciliation_id }}\",\n  \"details\": {\n    \"run_date\": \"{{ $json.run_date }}\",\n    \"discrepancies\": {{ JSON.stringify($json.discrepancies) }},\n    \"total_debits\": {{ $json.total_debits }},\n    \"total_credits\": {{ $json.total_credits }},\n    \"requires_human_review\": true\n  }\n}",
+        "jsonBody": "={\n  \"event_type\": \"reconciliation_discrepancy_alert\",\n  \"actor_type\": \"n8n\",\n  \"target_type\": \"reconciliation_run\",\n  \"target_id\": \"{{ $('Execute Supabase RPC run_reconciliation').item.json.reconciliation_id }}\",\n  \"details\": {\n    \"run_date\": \"{{ $('Execute Supabase RPC run_reconciliation').item.json.run_date }}\",\n    \"discrepancies\": {{ JSON.stringify($('Execute Supabase RPC run_reconciliation').item.json.discrepancies) }},\n    \"total_debits\": {{ $('Execute Supabase RPC run_reconciliation').item.json.total_debits }},\n    \"total_credits\": {{ $('Execute Supabase RPC run_reconciliation').item.json.total_credits }},\n    \"requires_human_review\": true\n  }\n}",
         "options": {
           "response": {
             "response": {
@@ -188,7 +179,10 @@
       "name": "Dispatch Reconciliation Mismatch Alert",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1200, 400]
+      "position": [
+        1200,
+        400
+      ]
     }
   ],
   "pinData": {},
