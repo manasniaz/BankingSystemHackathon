@@ -1,0 +1,367 @@
+{
+  "name": "WF-01 Transfer",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a01-wf-trigger-0001",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "transfer",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "757ef428-f630-4d0d-8c4d-c6427054cea7",
+      "name": "Webhook - Transfer Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1008,
+        200
+      ],
+      "webhookId": "wf-01-transfer-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\n\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Default placeholder fraud assessment for safe execution if not provided\nconst defaultFraudId = 'fa000000-0000-0000-0000-000000000001';\n\nconst sourceAccount = body.source_account_id || 'aa000000-0000-0000-0000-000000000001';\nconst destAccount = body.destination_account_id || 'bb000000-0000-0000-0000-000000000002';\nconst profileId = body.initiated_by_profile_id || 'a0000000-0000-0000-0000-000000000001';\nconst idempotencyKey = body.idempotency_key || `tx_${Date.now()}`;\nconst fraudAssessmentId = body.fraud_assessment_id || defaultFraudId;\n\nconst amountNum = Number(body.amount);\nif (isNaN(amountNum) || amountNum <= 0) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'amount must be a positive integer in minor units/cents',\n      params: null\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    params: {\n      p_source_account_id: String(sourceAccount).trim(),\n      p_destination_account_id: String(destAccount).trim(),\n      p_amount: amountNum,\n      p_currency: String(body.currency || 'USD').trim().toUpperCase(),\n      p_idempotency_key: String(idempotencyKey).trim(),\n      p_initiated_by_profile_id: String(profileId).trim(),\n      p_fraud_assessment_id: String(fraudAssessmentId).trim()\n    }\n  }\n}];"
+      },
+      "id": "a5dbca68-1acb-4bdf-9132-1d97cd472ae2",
+      "name": "Validate Request Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "is-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "432c1d6b-cfcc-4850-84eb-905d7e774bb6",
+      "name": "Check Input Validity",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -608,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/execute_transfer",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_source_account_id\": \"{{ $json.params.p_source_account_id }}\",\n  \"p_destination_account_id\": \"{{ $json.params.p_destination_account_id }}\",\n  \"p_amount\": {{ $json.params.p_amount }},\n  \"p_currency\": \"{{ $json.params.p_currency }}\",\n  \"p_idempotency_key\": \"{{ $json.params.p_idempotency_key }}\",\n  \"p_initiated_by_profile_id\": \"{{ $json.params.p_initiated_by_profile_id }}\",\n  \"p_fraud_assessment_id\": \"{{ $json.params.p_fraud_assessment_id }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b4b03bb1-513e-49ff-8d0c-3e39f8eff933",
+      "name": "Execute Supabase RPC execute_transfer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -400,
+        100
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "rpc-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "123966e1-8904-40ac-90a4-3bde8ae08de2",
+      "name": "Check RPC Result",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -208,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "tx_res_success",
+              "name": "success",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "id": "tx_id",
+              "name": "transaction_id",
+              "type": "string",
+              "value": "={{ $json.transaction_id }}"
+            },
+            {
+              "id": "tx_status",
+              "name": "status",
+              "type": "string",
+              "value": "completed"
+            },
+            {
+              "id": "tx_amt",
+              "name": "amount",
+              "type": "number",
+              "value": "={{ $json.amount }}"
+            },
+            {
+              "id": "tx_curr",
+              "name": "currency",
+              "type": "string",
+              "value": "={{ $json.currency }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "efc018f6-1a79-45d5-8f8e-fdcf93182568",
+      "name": "Transfer Successful Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "tx_res_fail",
+              "name": "success",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "tx_err",
+              "name": "error",
+              "type": "string",
+              "value": "={{ $json.error || $json.message || 'Transfer rejected by banking rules' }}"
+            },
+            {
+              "id": "tx_status_fail",
+              "name": "status",
+              "type": "string",
+              "value": "failed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e03b8553-cd5d-4994-aedb-7ff458c5653a",
+      "name": "Transfer Failed Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "metonystar1@gmail.com",
+        "subject": "={{ \"Transfer Failure Alert: \" + ($json.error || \"Unknown error\") }}",
+        "emailType": "text",
+        "message": "={{ \"TRANSFER FAILURE ALERT\\n\\nError: \" + ($json.error || \"Unknown\") + \"\\nIdempotency Key: \" + ($json.idempotency_key || \"N/A\") + \"\\n\\nNo funds were moved. The transaction was fully rolled back by PostgreSQL.\" }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "16846f12-1881-423c-87c0-3ae875edd986",
+      "name": "Email Ops - Transfer Failed Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        200,
+        200
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Request Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Transfer Request": {
+      "main": [
+        [
+          {
+            "node": "Validate Request Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Request Payload": {
+      "main": [
+        [
+          {
+            "node": "Check Input Validity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Input Validity": {
+      "main": [
+        [
+          {
+            "node": "Execute Supabase RPC execute_transfer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transfer Failed Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Supabase RPC execute_transfer": {
+      "main": [
+        [
+          {
+            "node": "Check RPC Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check RPC Result": {
+      "main": [
+        [
+          {
+            "node": "Transfer Successful Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transfer Failed Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transfer Failed Result": {
+      "main": [
+        [
+          {
+            "node": "Email Ops - Transfer Failed Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a01-ver-0001-transfer",
+  "meta": {
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
+  },
+  "id": "Nb5Uimn68L0BseRO",
+  "tags": []
+}

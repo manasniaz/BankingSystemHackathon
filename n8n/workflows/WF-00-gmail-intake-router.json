@@ -1,0 +1,663 @@
+{
+  "name": "WF-00 Gmail Front Door",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "readStatus": "unread"
+        }
+      },
+      "id": "a00-gmail-trigger-0001",
+      "name": "Gmail Trigger - Incoming Email",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1400,
+        200
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// Extract real sender email from Gmail metadata strictly (never body)\nlet rawFrom = item.from || '';\nlet fromEmail = '';\nif (typeof rawFrom === 'object' && rawFrom.address) {\n  fromEmail = rawFrom.address;\n} else if (typeof rawFrom === 'string') {\n  const match = rawFrom.match(/<([^>]+)>/);\n  fromEmail = match ? match[1] : rawFrom;\n}\nfromEmail = fromEmail.trim().toLowerCase();\n\nconst subject = item.subject || 'No Subject';\nconst bodyText = item.text || item.snippet || item.body || '';\nconst messageId = item.id || item.messageId || `msg_${Date.now()}`;\nconst threadId = item.threadId || messageId;\n\nreturn [{\n  json: {\n    fromEmail,\n    subject,\n    bodyText,\n    messageId,\n    threadId,\n    rawFrom\n  }\n}];"
+      },
+      "id": "a00-extract-meta-0002",
+      "name": "Extract Email Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1180,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "profiles",
+        "limit": 1,
+        "filterType": "string",
+        "filterString": "=email=eq.{{ $json.fromEmail }}&select=*"
+      },
+      "id": "a00-lookup-profile-0003",
+      "name": "Lookup Profile by Email",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -960,
+        200
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "profile-exists",
+              "leftValue": "={{ Array.isArray($input.all()) && $input.all().length > 0 && !!$input.first().json.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a00-check-registered-0004",
+      "name": "Customer Profile Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -740,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Extract Email Metadata').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Extract Email Metadata').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello,\n\nThank you for contacting Digital Bank.\n\nYour email address ({{ $('Extract Email Metadata').item.json.fromEmail }}) is not registered with any active customer account in our system.\n\nIf you are an existing customer, please ensure you are sending your inquiry from your registered email address.\n\nDigital Banking Security Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a00-unregistered-email-0005",
+      "name": "Send Unregistered Email Response",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -740,
+        420
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "account_holders",
+        "filterType": "string",
+        "filterString": "=profile_id=eq.{{ $json.id }}&select=*,accounts(*)"
+      },
+      "id": "a00-fetch-accounts-0006",
+      "name": "Fetch Authorized Accounts",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        100
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role\n    });\n  }\n});\n\nconst subject = meta.subject.toLowerCase();\nconst body = meta.bodyText.toLowerCase();\nconst text = subject + ' ' + body;\n\nlet intent = 'UNKNOWN';\nlet transferDetails = null;\n\n// 1. Balance Inquiry\nif (text.includes('balance') || text.includes('how much') || text.includes('statement') || text.includes('summary')) {\n  intent = 'BALANCE';\n}\n// 2. Transfer Request\nelse if (text.includes('transfer') || text.includes('send') || text.includes('pay') || text.includes('pkr') || text.includes('usd') || text.includes('dollars') || text.includes('rupees')) {\n  intent = 'TRANSFER';\n  \n  // Extract amount\n  let amountCents = 0;\n  const amountMatch = text.match(/(?:send|transfer|pay)?\\s*\\$?([0-9]+(?:\\.[0-9]{1,2})?)\\s*(?:pkr|usd|dollars|rupees|cents)?/i);\n  if (amountMatch) {\n    const num = parseFloat(amountMatch[1]);\n    if (!isNaN(num)) {\n      amountCents = Math.round(num < 10000 && !text.includes('cents') ? num * 100 : num);\n    }\n  }\n  if (amountCents === 0) amountCents = 10000;\n\n  // Extract target account number or UUID if present\n  let destAccount = null;\n  const accountMatch = meta.bodyText.match(/TEST-[A-Z0-9-]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  if (accountMatch) {\n    destAccount = accountMatch[0];\n  }\n\n  const primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts[0];\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountCents,\n    currency: primaryAcc ? primaryAcc.currency : 'USD',\n    idempotency_key: `gmail_${meta.messageId}`\n  };\n}\n// 3. Policy / RAG Query\nelse if (text.includes('policy') || text.includes('fee') || text.includes('limit') || text.includes('wire') || text.includes('overdraft') || text.includes('credit card') || text.includes('rule') || text.includes('support') || text.includes('help')) {\n  intent = 'POLICY_RAG';\n}\n// 4. Standing Orders\nelse if (text.includes('standing order') || text.includes('recurring') || text.includes('schedule')) {\n  intent = 'STANDING_ORDER';\n}\n// 5. Dispute / Fraud Alert\nelse if (text.includes('dispute') || text.includes('fraud') || text.includes('unauthorized') || text.includes('stolen') || text.includes('freeze')) {\n  intent = 'DISPUTE';\n}\n\n// 6. Security & Privacy check: Check if user asks for third-party profile balance\nif (text.includes('customer b') || (text.includes('bob') && profile.email.includes('alice'))) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails\n  }\n}];"
+      },
+      "id": "a00-classify-intent-0007",
+      "name": "Classify Intent & Authorize Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -300,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-balance",
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "BALANCE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Balance"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-transfer",
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "TRANSFER",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Transfer"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-rag",
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "POLICY_RAG",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Policy RAG"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-so",
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "STANDING_ORDER",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Standing Order"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-unauth",
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "UNAUTHORIZED_ACCESS",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Unauthorized Access"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Default / Other"
+        }
+      },
+      "id": "a00-switch-intent-0008",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        -80,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst accounts = item.authorizedAccounts || [];\n\nlet balanceMsg = `Hello ${item.full_name},\n\nHere is your authorized account balance summary:\n\n`;\n\nif (accounts.length === 0) {\n  balanceMsg += \"No active accounts found for your profile.\";\n} else {\n  accounts.forEach(acc => {\n    const formatted = (acc.balance / 100).toFixed(2);\n    balanceMsg += `- Account ${acc.account_number} (${acc.account_type.toUpperCase()}, Role: ${acc.role}): $${formatted} ${acc.currency} (Status: ${acc.status})\n`;\n  });\n}\n\nbalanceMsg += `\nThank you for banking with Digital Bank.`;\n\nreturn [{ json: { fromEmail: item.fromEmail, subject: item.subject, message: balanceMsg, profile_id: item.profile_id } }];"
+      },
+      "id": "a00-format-balance-0009",
+      "name": "Format Balance Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=RE: {{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.message }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a00-send-balance-email-0010",
+      "name": "Send Balance Response Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        420,
+        -160
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "WF-01-transfer.json",
+          "mode": "list",
+          "cachedResultName": "WF-01 Transfer"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "source_account_id": "={{ $json.transferDetails.source_account_id }}",
+            "destination_account_id": "={{ $json.transferDetails.destination_account || 'bb000000-0000-0000-0000-000000000002' }}",
+            "amount": "={{ $json.transferDetails.amount }}",
+            "currency": "={{ $json.transferDetails.currency }}",
+            "idempotency_key": "={{ $json.transferDetails.idempotency_key }}",
+            "initiated_by_profile_id": "={{ $json.profile_id }}"
+          }
+        }
+      },
+      "id": "a00-call-transfer-wf-0011",
+      "name": "Execute WF-01 Transfer Sub-Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nYour transfer request status:\n\nStatus: {{ $json.status || ($json.success ? 'Completed' : 'Failed') }}\nTransaction ID: {{ $json.transaction_id || 'N/A' }}\nAmount: ${{ (($json.amount || $('Classify Intent & Authorize Request').item.json.transferDetails.amount) / 100).toFixed(2) }} {{ $json.currency || 'USD' }}\nDetails: {{ $json.error ? 'Failed: ' + $json.error : 'Successfully processed.' }}\n\nThank you,\nDigital Bank Transfer Service",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a00-send-transfer-email-0012",
+      "name": "Send Transfer Response Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        420,
+        20
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "WF-04-rag-support-case.json",
+          "mode": "list",
+          "cachedResultName": "WF-04 RAG Support"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "profile_id": "={{ $json.profile_id }}",
+            "customer_email": "={{ $json.fromEmail }}",
+            "subject": "={{ $json.subject }}",
+            "inquiry": "={{ $json.bodyText }}"
+          }
+        }
+      },
+      "id": "a00-call-rag-wf-0013",
+      "name": "Execute WF-04 RAG Support Sub-Workflow",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nWe have received your support inquiry regarding banking policy.\n\nSupport Case ID: {{ $json.support_case_id }}\nStatus: {{ $json.status }}\n\nOur automated support assistant has analyzed your request. If human review is required, a specialist will verify and respond shortly.\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a00-send-rag-ack-email-0014",
+      "name": "Send RAG Support Receipt Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        420,
+        200
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=SECURITY NOTICE: Access Denied",
+        "emailType": "text",
+        "message": "=Hello {{ $json.full_name }},\n\nSECURITY NOTICE: Your request to access account or balance details for third parties has been DENIED.\n\nYou are only authorized to view accounts where you are registered as a primary or joint holder in our database.\n\nThis security incident has been logged in our system audit trail.\n\nDigital Banking Security Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a00-send-security-denial-0015",
+      "name": "Send Security Denial Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        200,
+        380
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=RE: {{ $json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $json.full_name }},\n\nThank you for contacting Digital Bank.\n\nWe received your email: \"{{ $json.subject }}\".\nOur banking assistant could not automatically process your request. A customer support representative will review your message.\n\nFor balance checks, transfers, or policy inquiries, please state your request clearly in your email.\n\nDigital Banking Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a00-send-default-email-0016",
+      "name": "Send General Inquiry Response Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        200,
+        560
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger - Incoming Email": {
+      "main": [
+        [
+          {
+            "node": "Extract Email Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email Metadata": {
+      "main": [
+        [
+          {
+            "node": "Lookup Profile by Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Profile by Email": {
+      "main": [
+        [
+          {
+            "node": "Customer Profile Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Customer Profile Exists?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Authorized Accounts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unregistered Email Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Authorized Accounts": {
+      "main": [
+        [
+          {
+            "node": "Classify Intent & Authorize Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Intent & Authorize Request": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Intent": {
+      "main": [
+        [
+          {
+            "node": "Format Balance Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute WF-01 Transfer Sub-Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute WF-04 RAG Support Sub-Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Balance Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Security Denial Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send General Inquiry Response Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Balance Response": {
+      "main": [
+        [
+          {
+            "node": "Send Balance Response Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute WF-01 Transfer Sub-Workflow": {
+      "main": [
+        [
+          {
+            "node": "Send Transfer Response Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute WF-04 RAG Support Sub-Workflow": {
+      "main": [
+        [
+          {
+            "node": "Send RAG Support Receipt Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a00-ver-0001-gmail-intake-router",
+  "meta": {
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
+  },
+  "id": "WF00GmailFrontDoor",
+  "tags": []
+}

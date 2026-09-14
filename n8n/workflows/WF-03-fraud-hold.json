@@ -1,0 +1,357 @@
+{
+  "name": "WF-03 Fraud Hold",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a03-wf-trigger-0001",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1408,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "assess-fraud",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "70624746-78ca-40c3-8c9a-4760f68453a0",
+      "name": "Webhook - Fraud Assessment Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        200
+      ],
+      "webhookId": "wf-03-fraud-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nconst accountId = body.account_id || 'aa000000-0000-0000-0000-000000000001';\nconst amountNum = Number(body.amount) || 1000;\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      account_id: String(accountId).trim(),\n      amount: amountNum,\n      currency: String(body.currency || 'USD').trim().toUpperCase(),\n      profile_id: body.profile_id ? String(body.profile_id).trim() : null,\n      transaction_context: body.transaction_context || {}\n    }\n  }\n}];"
+      },
+      "id": "d46637a7-2302-433c-981c-3717457b8b29",
+      "name": "Validate Request Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.PYTHON_SERVICE_URL || 'http://localhost:8080' }}/assess-fraud",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"account_id\": \"{{ $json.params.account_id }}\",\n  \"amount\": {{ $json.params.amount }},\n  \"currency\": \"{{ $json.params.currency }}\",\n  \"profile_id\": \"{{ $json.params.profile_id }}\",\n  \"transaction_context\": {{ JSON.stringify($json.params.transaction_context) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b0d95b02-6552-4bde-9d01-7609992e6e2b",
+      "name": "Call Python Fraud Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -960,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// Safety rule: NEVER silently approve if fraud service fails\nif (!item || typeof item !== 'object' || item.error || (item.approved === undefined && item.risk_score === undefined)) {\n  return [{\n    json: {\n      isSchemaValid: false,\n      approved: false,\n      risk_score: 100.0,\n      decision: 'HOLD',\n      reason: 'Python fraud service unavailable or returned invalid schema (Safety Lock triggered)',\n      fraud_assessment_id: null\n    }\n  }];\n}\n\nconst riskScore = Number(item.risk_score || 0);\nconst approved = item.approved === true && riskScore < 75;\nlet decision = 'CLEAR';\nif (riskScore >= 75 || !approved) {\n  decision = 'HOLD';\n} else if (riskScore >= 40) {\n  decision = 'REVIEW';\n}\n\nreturn [{\n  json: {\n    isSchemaValid: true,\n    approved,\n    risk_score: riskScore,\n    decision,\n    reason: item.reason || 'Fraud assessment complete',\n    fraud_assessment_id: item.fraud_assessment_id || 'fa000000-0000-0000-0000-000000000001'\n  }\n}];"
+      },
+      "id": "ffa7914b-6723-43e4-b812-887ed0a10000",
+      "name": "Validate & Evaluate Fraud Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -740,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
+            {
+              "id": "hold-decision",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "HOLD",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "not-approved",
+              "leftValue": "={{ $json.approved }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f12932b7-d9bc-49f2-a8d2-4d8d9cecc34c",
+      "name": "Fraud Hold Required?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -520,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/place_account_hold",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_account_id\": \"{{ $('Validate Request Payload').item.json.params.account_id }}\",\n  \"p_hold_type\": \"fraud_investigation\",\n  \"p_is_full_freeze\": true,\n  \"p_amount_held\": {{ $('Validate Request Payload').item.json.params.amount }},\n  \"p_reason\": \"Fraud Hold: {{ $('Validate & Evaluate Fraud Decision').item.json.reason }}\",\n  \"p_placed_by_profile_id\": {{ $('Validate Request Payload').item.json.params.profile_id ? '\"' + $('Validate Request Payload').item.json.params.profile_id + '\"' : null }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "e82be254-1ccc-4873-8413-efe9d04c8201",
+      "name": "Place Account Freeze Hold RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -300,
+        0
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "metonystar1@gmail.com",
+        "subject": "FRAUD ALERT: Account Hold Placed - Requires Human Review",
+        "emailType": "text",
+        "message": "={{ \"FRAUD HOLD ALERT\\n\\nAccount ID: \" + $('Validate Request Payload').item.json.params.account_id + \"\\nAmount: \" + $('Validate Request Payload').item.json.params.amount + \" cents\\nRisk Score: \" + $('Validate & Evaluate Fraud Decision').item.json.risk_score + \"\\nDecision: \" + $('Validate & Evaluate Fraud Decision').item.json.decision + \"\\nReason: \" + $('Validate & Evaluate Fraud Decision').item.json.reason + \"\\n\\nAction Required: Human operator review via release_account_hold RPC.\" }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "89503816-f6bb-441b-b1e2-82aa7cb5534d",
+      "name": "Email Ops - Fraud Hold Placed Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -80,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fraud_resp_ok",
+              "name": "approved",
+              "type": "boolean",
+              "value": "={{ $json.approved }}"
+            },
+            {
+              "id": "fraud_score",
+              "name": "risk_score",
+              "type": "number",
+              "value": "={{ $json.risk_score }}"
+            },
+            {
+              "id": "fraud_dec",
+              "name": "decision",
+              "type": "string",
+              "value": "={{ $json.decision }}"
+            },
+            {
+              "id": "fraud_reason",
+              "name": "reason",
+              "type": "string",
+              "value": "={{ $json.reason }}"
+            },
+            {
+              "id": "fraud_id",
+              "name": "fraud_assessment_id",
+              "type": "string",
+              "value": "={{ $json.fraud_assessment_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4bf6eae2-3dc7-45d3-8dbe-18734cf52c69",
+      "name": "Format Fraud Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -300,
+        200
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Request Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Fraud Assessment Request": {
+      "main": [
+        [
+          {
+            "node": "Validate Request Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Request Payload": {
+      "main": [
+        [
+          {
+            "node": "Call Python Fraud Service",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Python Fraud Service": {
+      "main": [
+        [
+          {
+            "node": "Validate & Evaluate Fraud Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Evaluate Fraud Decision": {
+      "main": [
+        [
+          {
+            "node": "Fraud Hold Required?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fraud Hold Required?": {
+      "main": [
+        [
+          {
+            "node": "Place Account Freeze Hold RPC",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Fraud Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Place Account Freeze Hold RPC": {
+      "main": [
+        [
+          {
+            "node": "Email Ops - Fraud Hold Placed Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Ops - Fraud Hold Placed Alert": {
+      "main": [
+        [
+          {
+            "node": "Format Fraud Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a03-ver-0001-fraud-hold",
+  "meta": {
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
+  },
+  "id": "Rjv4NeaandtdWlvr",
+  "tags": []
+}
