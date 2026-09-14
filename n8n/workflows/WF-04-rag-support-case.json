@@ -2,13 +2,35 @@
   "name": "WF-04 RAG Support",
   "nodes": [
     {
-      "parameters": {},
-      "id": "a04-wf-trigger-0001",
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "profile_id",
+              "type": "string"
+            },
+            {
+              "name": "customer_email",
+              "type": "string"
+            },
+            {
+              "name": "subject",
+              "type": "string"
+            },
+            {
+              "name": "inquiry",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "169ddad4-17e3-4348-834e-f1d91cfc8dd1",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
-        -1680,
+        0,
         0
       ]
     },
@@ -19,27 +41,27 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "566ddae1-6bd3-4e71-8b1b-115ffb66e4a5",
+      "id": "1dbca59b-c13c-44a8-9225-e00d54441921",
       "name": "Webhook - New Support Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -1680,
-        200
+        0,
+        208
       ],
       "webhookId": "wf-04-support-webhook"
     },
     {
       "parameters": {
-        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nconst profileId = body.profile_id || 'a0000000-0000-0000-0000-000000000001';\nconst subject = body.subject || 'General Banking Inquiry';\nconst inquiry = body.inquiry || body.bodyText || 'What are the bank policies?';\nconst customerEmail = body.customer_email || 'customer@test.banking';\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: String(profileId).trim(),\n      customer_email: String(customerEmail).trim(),\n      subject: String(subject).trim(),\n      inquiry: String(inquiry).trim()\n    }\n  }\n}];"
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// No hardcoded identity fallbacks. profile_id must come from the verified Gmail sender.\nconst profileId = body.profile_id;\nif (!profileId || !uuidRegex.test(String(profileId).trim())) {\n  throw new Error('profile_id is required and must be a valid UUID resolved from the verified email sender');\n}\n\nconst inquiry = String(body.inquiry || body.bodyText || '').trim();\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: String(profileId).trim(),\n      customer_email: String(body.customer_email || '').trim(),\n      subject: String(body.subject || 'General Banking Inquiry').trim(),\n      inquiry: inquiry\n    }\n  }\n}];"
       },
-      "id": "e689ceab-983e-4bfa-927c-52ee4b9cbf6a",
+      "id": "71f8510f-be32-4a0d-b4ae-428735e405c3",
       "name": "Validate Support Request Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1488,
-        100
+        192,
+        112
       ]
     },
     {
@@ -66,13 +88,13 @@
           ]
         }
       },
-      "id": "4618bab1-f25c-47d6-9ecf-9567ce26285c",
+      "id": "6f954082-041b-41d0-9f33-34d558f76734",
       "name": "Create Support Case in Supabase",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -1280,
-        100
+        400,
+        112
       ],
       "credentials": {
         "supabaseApi": {
@@ -85,13 +107,13 @@
       "parameters": {
         "jsCode": "const caseRow = $input.first().json;\nconst caseId = caseRow.id || (Array.isArray(caseRow) ? caseRow[0]?.id : `case_${Date.now()}`);\nconst params = $('Validate Support Request Payload').item.json.params;\n\nreturn [{\n  json: {\n    case_id: caseId,\n    profile_id: params.profile_id,\n    subject: params.subject,\n    inquiry: params.inquiry,\n    customer_email: params.customer_email\n  }\n}];"
       },
-      "id": "bd9e5ea1-6cc4-401e-b1a5-caa6f31ac2d6",
+      "id": "b3e44677-6654-499f-bb75-2a2fb9b585a6",
       "name": "Extract Case ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1080,
-        100
+        608,
+        112
       ]
     },
     {
@@ -103,13 +125,13 @@
           "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) If retrieved policy does not clearly cover the question, set grounded=false, needs_human=true.\n(4) List doc_ids in citations.\n(5) Return ONLY structured JSON: draft (string), grounded (boolean), confidence (number 0-1), citations (array), needs_human (boolean)."
         }
       },
-      "id": "e2daa577-1656-4de9-a911-b305d330351a",
+      "id": "a342f61b-67eb-4d07-841f-b2164cd0a2b4",
       "name": "Draft Grounded Reply",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        -880,
-        100
+        800,
+        112
       ]
     },
     {
@@ -119,13 +141,13 @@
           "temperature": 0.1
         }
       },
-      "id": "3de5cbc4-ec01-4372-ba68-fc9bd92dfb3e",
+      "id": "c395c47e-ccf0-4dc6-9a19-b729b89ce9cf",
       "name": "Groq Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
       "typeVersion": 1,
       "position": [
-        -980,
-        340
+        704,
+        352
       ],
       "credentials": {
         "groqApi": {
@@ -147,13 +169,13 @@
           "pineconeNamespace": "banking_policy"
         }
       },
-      "id": "9c7edf68-3af7-450a-a564-5190e1d58810",
+      "id": "310feb0b-fe70-4fc5-9235-f9bc41d8ec2d",
       "name": "Policy Knowledge Base",
       "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
       "typeVersion": 1.3,
       "position": [
-        -780,
-        340
+        912,
+        352
       ],
       "credentials": {
         "pineconeApi": {
@@ -164,12 +186,12 @@
     },
     {
       "parameters": {},
-      "id": "5d8d5ccc-7fdf-4d17-bef0-dd4ee35bd519",
+      "id": "47d50c41-fc63-4605-8632-efd1676a87b3",
       "name": "Gemini Embeddings",
       "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
       "typeVersion": 1,
       "position": [
-        -780,
+        912,
         480
       ],
       "credentials": {
@@ -183,13 +205,13 @@
       "parameters": {
         "jsonSchemaExample": "{\n  \"draft\": \"Official policy response based strictly on retrieved facts.\",\n  \"grounded\": true,\n  \"confidence\": 0.95,\n  \"citations\": [\"doc_wire_policy_01\"],\n  \"needs_human\": false\n}"
       },
-      "id": "5ed2ff92-2a09-4081-95b7-368a682bfedd",
+      "id": "eadc87fa-cbe0-45a4-afb6-9f3c066c2ff9",
       "name": "Draft Output Parser",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.2,
       "position": [
-        -580,
-        220
+        1104,
+        224
       ]
     },
     {
@@ -226,13 +248,13 @@
         },
         "options": {}
       },
-      "id": "53de04f3-73ff-4c21-aac1-f40e6b77128d",
+      "id": "c39f768c-46de-4c99-83e3-f410caae59f8",
       "name": "Grounded & Confident? (>= 0.7)",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -440,
-        100
+        1248,
+        112
       ]
     },
     {
@@ -267,12 +289,12 @@
         },
         "options": {}
       },
-      "id": "46ac93bd-4ed1-4837-ba4b-3210f27c6eff",
+      "id": "2c050e46-5c4b-4ff7-854e-79252d2cf5a5",
       "name": "Format Grounded Draft",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -240,
+        1440,
         0
       ]
     },
@@ -308,13 +330,13 @@
         },
         "options": {}
       },
-      "id": "99c5279d-a1f0-43f7-826a-c70ce2684a07",
+      "id": "027204be-da38-4cf5-a38d-4b44e045ea23",
       "name": "Insufficient Policy Fallback Draft",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        -240,
-        200
+        1440,
+        208
       ]
     },
     {
@@ -349,13 +371,13 @@
           ]
         }
       },
-      "id": "87076d57-6c24-4867-a596-76475bef8850",
+      "id": "ff612cde-3d6c-4531-a087-cf3251e84c0b",
       "name": "Save Support Case Draft in Supabase",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -40,
-        100
+        1648,
+        112
       ],
       "credentials": {
         "supabaseApi": {
@@ -386,13 +408,13 @@
           ]
         }
       },
-      "id": "6496cabd-ae1e-4bd7-994d-3176b2375802",
+      "id": "45b196b8-035b-4e97-802c-4cd3e71edaec",
       "name": "Update Case Status to Awaiting Review",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        160,
-        100
+        1840,
+        112
       ],
       "credentials": {
         "supabaseApi": {
@@ -422,22 +444,27 @@
               "name": "status",
               "type": "string",
               "value": "awaiting_human_review"
+            },
+            {
+              "id": "rag_grounded",
+              "name": "threshold_exceeded",
+              "type": "boolean",
+              "value": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded }}"
             }
           ]
         },
         "options": {}
       },
-      "id": "706834e8-a523-4740-80bc-b78d0a38e744",
+      "id": "bb15b417-c515-44a6-80b8-b823bf2fd1f3",
       "name": "Format RAG Result",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        360,
-        100
+        2048,
+        112
       ]
     }
   ],
-  "pinData": {},
   "connections": {
     "Execute Workflow Trigger": {
       "main": [
@@ -612,15 +639,15 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "a04-ver-0001-rag-support",
+  "versionId": "209e9875-c7e8-4dd2-91d7-13f108602455",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
-  "id": "AzxGlnbC2WyLibC7",
+  "id": "GLAY2Ob2nfxsFh7t",
   "tags": []
 }

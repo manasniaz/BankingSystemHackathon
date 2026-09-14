@@ -21,6 +21,8 @@ Modern banking demands seamless email interaction without sacrificing financial 
 2. **Deterministic Fraud Boundaries**: High-risk transactions trigger automated account freezes before ledger execution based on velocity, amount, and recipient history.
 3. **Human-in-the-Loop RAG Governance**: AI support drafts generated via RAG are saved to an internal approval queue (`support_case_drafts`). No AI response reaches a customer without explicit human operator validation.
 
+> 📋 **This capstone is graded on justified engineering judgment, not just working code.** [`docs/decisions.md`](docs/decisions.md) walks through all 32 edge cases from the assignment brief — what's built, what's deliberately scoped out, and the reasoning for each call.
+
 ---
 
 ## 📊 Deployment & Implementation Matrix
@@ -283,8 +285,12 @@ BankingSystemHackathon/
 ├── docs/                               # System Specs & Architecture Documents
 │   ├── architecture.md                 # Table schemas, RPC function signatures, security matrix
 │   ├── database.md                     # ER diagrams & migration documentation
+│   ├── decisions.md                    # Item-by-item edge case checklist: what's built, what's scoped out, and why
+│   ├── mvp-scope.md                    # Short version of decisions.md: in-scope vs. out-of-scope summary
 │   ├── requirements.md                 # Functional & Non-Functional Specifications
-│   └── security.md                     # RLS rules & cryptographic integrity specs
+│   ├── security.md                     # RLS rules, role model & credential handling
+│   ├── testing.md                      # How to run the SQL test suite + what was live-verified
+│   └── workflows.md                    # n8n workflow quick reference + audit changelog
 ├── n8n/                                # Automation Control Plane
 │   ├── README.md                       # Operator & Manual Execution Guide
 │   ├── validate_workflows.js           # Workflow syntax & node configuration validator
@@ -457,6 +463,15 @@ Judges and evaluators can test the live autonomous banking platform directly by 
 1. **Email Intake Mechanism**: Intake relies on n8n's Gmail Trigger polling for unread messages.
 2. **Fraud Microservice Reachability**: n8n must be able to reach `PYTHON_SERVICE_URL`. If the microservice is offline, `WF-03` defaults to a defensive safety hold.
 3. **Pinecone Indexing**: RAG policy retrieval requires pre-populated vector embeddings in Pinecone (`banking-policy-index`, namespace `banking_policy`).
+
+### ⚠️ Two open action items (found during the 2026-09-14 audit, need a manual fix)
+
+These require entering a secret/dashboard action that shouldn't be done by an automated agent, so they're flagged here instead of silently fixed:
+
+1. **Railway Python service is missing its Supabase env vars.** A live test call to `/assess-fraud` returned `{"detail":"Supabase credentials missing from environment configuration"}`. Fix: open the Railway project → Variables, and set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (values from Supabase → Project Settings → API). The n8n side of this connection was also broken (the `PYTHON_SERVICE_URL` instance variable is stored without an `https://` scheme) — that half is already fixed in WF-00 and WF-03.
+2. **The Pinecone index `banking-policy-index` doesn't exist yet** — a live test call returned HTTP 404. RAG support degrades gracefully to a "needs human review" draft rather than crashing, but there's no real grounded retrieval happening until the index is created (cosine metric, 768 dimensions to match Gemini `text-embedding-004`) and seeded with actual policy documents.
+
+Full list of what was checked, fixed, and left open: [`docs/decisions.md`](docs/decisions.md#known-live-issues-at-time-of-this-audit-2026-09-14).
 
 ---
 

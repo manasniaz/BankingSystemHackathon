@@ -12,7 +12,7 @@
           ]
         }
       },
-      "id": "845d90c8-4af4-4c51-9d33-0bc4b8fd8703",
+      "id": "f5463af8-9712-472a-ba5b-7808260ad2be",
       "name": "Schedule - Nightly Reconciliation",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
@@ -25,7 +25,7 @@
       "parameters": {
         "jsCode": "const today = new Date().toISOString().split('T')[0];\nreturn [{ json: { target_date: today } }];"
       },
-      "id": "ed503d2d-784a-4bb7-acbc-ab89db8d9977",
+      "id": "2e86e5fe-71c5-4c01-9394-e8f96da7f298",
       "name": "Format Run Date",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -60,7 +60,7 @@
           }
         }
       },
-      "id": "cd824224-de9e-4c7f-92e2-a17208d7aa14",
+      "id": "9eff5491-cbe5-468f-b568-3fa81d595b33",
       "name": "Execute Supabase RPC run_reconciliation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -100,7 +100,7 @@
         },
         "options": {}
       },
-      "id": "4f1c368a-eda9-44e2-b42c-837e60a648d5",
+      "id": "4fc2a2e8-4926-4659-ac53-4066951478dc",
       "name": "Reconciliation Passed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -123,7 +123,7 @@
         },
         "options": {}
       },
-      "id": "0594af64-02da-4ec7-a920-1831da2f1b54",
+      "id": "25f19d73-d609-4923-ba40-08a365129c89",
       "name": "Log Successful Reconciliation",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -176,7 +176,7 @@
         },
         "options": {}
       },
-      "id": "8b940ca2-69ad-4cff-a1d8-65d86d0299db",
+      "id": "9fa84a80-009f-41eb-8f00-47394225b86c",
       "name": "Format Discrepancy Alert",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -195,7 +195,7 @@
           "appendAttribution": false
         }
       },
-      "id": "fddbc11c-0cb0-4ea6-ac11-93798f03b5d7",
+      "id": "9ad89208-cb19-464e-8626-f6670ec3cab1",
       "name": "Email Ops Team - Reconciliation Mismatch",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
@@ -203,6 +203,7 @@
         208,
         208
       ],
+      "webhookId": "0749a124-464e-4862-b5ad-27e167c8b6ec",
       "credentials": {
         "gmailOAuth2": {
           "id": "IrWmPXzOkHIt9fdU",
@@ -211,7 +212,6 @@
       }
     }
   ],
-  "pinData": {},
   "connections": {
     "Schedule - Nightly Reconciliation": {
       "main": [
@@ -276,15 +276,15 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "a06-ver-0001-reconciliation",
+  "versionId": "0efbbe73-cf1a-48b6-9a85-66e724dfabb5",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
-  "id": "RwXPtxdFBQ26tnLA",
+  "id": "NqtzJ3m9LjrHhdIM",
   "tags": []
 }

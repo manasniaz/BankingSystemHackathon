@@ -2,13 +2,47 @@
   "name": "WF-01 Transfer",
   "nodes": [
     {
-      "parameters": {},
-      "id": "a01-wf-trigger-0001",
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "source_account_id",
+              "type": "string"
+            },
+            {
+              "name": "destination_account_id",
+              "type": "string"
+            },
+            {
+              "name": "amount",
+              "type": "number"
+            },
+            {
+              "name": "currency",
+              "type": "string"
+            },
+            {
+              "name": "idempotency_key",
+              "type": "string"
+            },
+            {
+              "name": "initiated_by_profile_id",
+              "type": "string"
+            },
+            {
+              "name": "fraud_assessment_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "6661fe34-7335-4d00-b10e-37147e37b972",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
       "position": [
-        -1008,
+        0,
         0
       ]
     },
@@ -19,27 +53,27 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "757ef428-f630-4d0d-8c4d-c6427054cea7",
+      "id": "3c56068c-f1e2-4625-bb6b-a4ba2563c00e",
       "name": "Webhook - Transfer Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -1008,
-        200
+        0,
+        208
       ],
       "webhookId": "wf-01-transfer-webhook"
     },
     {
       "parameters": {
-        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\n\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Default placeholder fraud assessment for safe execution if not provided\nconst defaultFraudId = 'fa000000-0000-0000-0000-000000000001';\n\nconst sourceAccount = body.source_account_id || 'aa000000-0000-0000-0000-000000000001';\nconst destAccount = body.destination_account_id || 'bb000000-0000-0000-0000-000000000002';\nconst profileId = body.initiated_by_profile_id || 'a0000000-0000-0000-0000-000000000001';\nconst idempotencyKey = body.idempotency_key || `tx_${Date.now()}`;\nconst fraudAssessmentId = body.fraud_assessment_id || defaultFraudId;\n\nconst amountNum = Number(body.amount);\nif (isNaN(amountNum) || amountNum <= 0) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'amount must be a positive integer in minor units/cents',\n      params: null\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    params: {\n      p_source_account_id: String(sourceAccount).trim(),\n      p_destination_account_id: String(destAccount).trim(),\n      p_amount: amountNum,\n      p_currency: String(body.currency || 'USD').trim().toUpperCase(),\n      p_idempotency_key: String(idempotencyKey).trim(),\n      p_initiated_by_profile_id: String(profileId).trim(),\n      p_fraud_assessment_id: String(fraudAssessmentId).trim()\n    }\n  }\n}];"
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\n\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// SECURITY: No hardcoded fallbacks. Every field must be supplied by the caller.\n// A missing field is a rejected request, never a default account.\nconst required = {\n  source_account_id: body.source_account_id,\n  destination_account_id: body.destination_account_id,\n  initiated_by_profile_id: body.initiated_by_profile_id,\n  fraud_assessment_id: body.fraud_assessment_id,\n  idempotency_key: body.idempotency_key\n};\n\nconst missing = [];\nObject.keys(required).forEach(k => {\n  if (!required[k] || String(required[k]).trim() === '') missing.push(k);\n});\n\nif (missing.length > 0) {\n  return [{ json: { isValid: false, validationError: 'Missing required field(s): ' + missing.join(', '), params: null } }];\n}\n\nconst uuidFields = ['source_account_id', 'destination_account_id', 'initiated_by_profile_id', 'fraud_assessment_id'];\nfor (const f of uuidFields) {\n  if (!uuidRegex.test(String(required[f]).trim())) {\n    return [{ json: { isValid: false, validationError: f + ' must be a valid UUID', params: null } }];\n  }\n}\n\nif (String(required.source_account_id).trim() === String(required.destination_account_id).trim()) {\n  return [{ json: { isValid: false, validationError: 'Source and destination accounts must be different', params: null } }];\n}\n\nconst amountNum = Number(body.amount);\nif (isNaN(amountNum) || amountNum <= 0 || !Number.isInteger(amountNum)) {\n  return [{ json: { isValid: false, validationError: 'amount must be a positive integer in minor units (cents)', params: null } }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    params: {\n      p_source_account_id: String(required.source_account_id).trim(),\n      p_destination_account_id: String(required.destination_account_id).trim(),\n      p_amount: amountNum,\n      p_currency: String(body.currency || 'USD').trim().toUpperCase(),\n      p_idempotency_key: String(required.idempotency_key).trim(),\n      p_initiated_by_profile_id: String(required.initiated_by_profile_id).trim(),\n      p_fraud_assessment_id: String(required.fraud_assessment_id).trim()\n    }\n  }\n}];"
       },
-      "id": "a5dbca68-1acb-4bdf-9132-1d97cd472ae2",
+      "id": "87e3cd07-8d8c-42ac-9a49-ae44bb159e39",
       "name": "Validate Request Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -800,
-        100
+        208,
+        112
       ]
     },
     {
@@ -67,13 +101,13 @@
         },
         "options": {}
       },
-      "id": "432c1d6b-cfcc-4850-84eb-905d7e774bb6",
+      "id": "7bafc827-7c0f-4620-afe7-1b7134f75506",
       "name": "Check Input Validity",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -608,
-        100
+        400,
+        112
       ]
     },
     {
@@ -102,13 +136,13 @@
           }
         }
       },
-      "id": "b4b03bb1-513e-49ff-8d0c-3e39f8eff933",
+      "id": "10f30af4-1ad6-40dc-8223-bc733a656a65",
       "name": "Execute Supabase RPC execute_transfer",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -400,
-        100
+        608,
+        112
       ],
       "credentials": {
         "supabaseApi": {
@@ -142,13 +176,13 @@
         },
         "options": {}
       },
-      "id": "123966e1-8904-40ac-90a4-3bde8ae08de2",
+      "id": "c33032fd-539b-4079-b82d-0bec0f9a2895",
       "name": "Check RPC Result",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -208,
-        100
+        800,
+        112
       ]
     },
     {
@@ -189,12 +223,12 @@
         },
         "options": {}
       },
-      "id": "efc018f6-1a79-45d5-8f8e-fdcf93182568",
+      "id": "56709cad-346b-48ed-8afc-9df758194dd8",
       "name": "Transfer Successful Result",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        0,
+        1008,
         0
       ]
     },
@@ -224,13 +258,13 @@
         },
         "options": {}
       },
-      "id": "e03b8553-cd5d-4994-aedb-7ff458c5653a",
+      "id": "44e3c9b1-f620-4b34-8f6a-63811b0b951a",
       "name": "Transfer Failed Result",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        0,
-        200
+        1008,
+        208
       ]
     },
     {
@@ -243,14 +277,15 @@
           "appendAttribution": false
         }
       },
-      "id": "16846f12-1881-423c-87c0-3ae875edd986",
+      "id": "1a2fd549-5b57-4398-aa0c-6db92d1ab62a",
       "name": "Email Ops - Transfer Failed Alert",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        200,
-        200
+        1216,
+        208
       ],
+      "webhookId": "d73b7748-2694-438d-a555-22704ac8922a",
       "credentials": {
         "gmailOAuth2": {
           "id": "IrWmPXzOkHIt9fdU",
@@ -259,7 +294,6 @@
       }
     }
   ],
-  "pinData": {},
   "connections": {
     "Execute Workflow Trigger": {
       "main": [
@@ -353,15 +387,15 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "a01-ver-0001-transfer",
+  "versionId": "41819eef-1d69-4c01-aaef-9b4eed5ecb99",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
-  "id": "Nb5Uimn68L0BseRO",
+  "id": "ssoIFGkP21qoCBvg",
   "tags": []
 }

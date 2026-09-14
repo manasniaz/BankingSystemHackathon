@@ -11,13 +11,13 @@
           ]
         }
       },
-      "id": "1ae38aa8-aecc-42f3-84d4-599709982637",
+      "id": "06b28c4c-e1bf-4476-a307-0d460c2faa22",
       "name": "Schedule - Hourly Standing Order Check",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -624,
-        64
+        -608,
+        112
       ]
     },
     {
@@ -28,13 +28,13 @@
         "filterType": "string",
         "filterString": "=status=eq.active&next_execution_at=lte.{{ $now.toISO() }}&select=id,source_account_id,destination_account_id,amount,currency,frequency,next_execution_at,retry_count,last_error,status"
       },
-      "id": "0f01dbc3-ad24-4611-9da5-94404c79d867",
+      "id": "3054bbed-b410-474c-97c6-4a1eee33df1c",
       "name": "Fetch Due Standing Orders",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -416,
-        64
+        -400,
+        112
       ],
       "credentials": {
         "supabaseApi": {
@@ -68,26 +68,26 @@
         },
         "options": {}
       },
-      "id": "21ac3617-f16f-4b2a-b618-9fc4bcff51ed",
+      "id": "fd7a4141-5812-4216-a028-f7cdfd8b16a2",
       "name": "Any Orders Due?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -224,
-        64
+        -208,
+        112
       ]
     },
     {
       "parameters": {
         "options": {}
       },
-      "id": "5984bc86-5215-42ab-9e7c-98d74c053ed8",
+      "id": "9cb38e0b-e0c2-46cb-a6c0-d1ec0b19ad8e",
       "name": "Process Orders One By One",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -16,
-        -48
+        0,
+        0
       ]
     },
     {
@@ -116,13 +116,13 @@
           }
         }
       },
-      "id": "da71f762-94c8-44f3-a1ec-58460e17ff30",
+      "id": "5586c45b-df3f-4e6c-b245-6d87b77d54a5",
       "name": "Execute Supabase RPC execute_standing_order",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        192,
-        -48
+        208,
+        0
       ],
       "credentials": {
         "supabaseApi": {
@@ -156,13 +156,13 @@
         },
         "options": {}
       },
-      "id": "fd480f0f-ad34-41a4-ad3f-00412299ac9f",
+      "id": "5a14f6ff-3d5d-4195-b8cc-ef39e5392e04",
       "name": "Check Execution Result",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        384,
-        -48
+        400,
+        0
       ]
     },
     {
@@ -200,13 +200,13 @@
         },
         "options": {}
       },
-      "id": "9d6b76db-d62f-4495-8ede-cd1061ffa8bc",
+      "id": "d9c89275-0066-42e6-b337-c97c068bc7e3",
       "name": "Permanent Failure?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        592,
-        80
+        608,
+        128
       ]
     },
     {
@@ -235,13 +235,13 @@
         },
         "options": {}
       },
-      "id": "d2cb46e7-ca4f-48e7-a258-d5ac23bc0824",
+      "id": "8a0d94b7-852a-44b5-9200-f3a841e23a31",
       "name": "Format Permanent Failure Alert",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        784,
-        80
+        800,
+        128
       ]
     },
     {
@@ -254,14 +254,15 @@
           "appendAttribution": false
         }
       },
-      "id": "6215ce37-0fe2-4721-abb3-487b99c25f25",
+      "id": "a9d12e8f-c28c-4a71-b285-47b216f9528a",
       "name": "Email Ops Team - Standing Order Failed",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        992,
-        80
+        1008,
+        128
       ],
+      "webhookId": "0a210038-8ce5-42e6-b798-bdf108e481b3",
       "credentials": {
         "gmailOAuth2": {
           "id": "IrWmPXzOkHIt9fdU",
@@ -270,7 +271,6 @@
       }
     }
   ],
-  "pinData": {},
   "connections": {
     "Schedule - Hourly Standing Order Check": {
       "main": [
@@ -386,15 +386,15 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "a02-ver-0001-standing-orders",
+  "versionId": "0bda3061-87e6-4ac4-94ad-2a2efa23ada5",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
-  "id": "TdNAO2evgEZkXqzz",
+  "id": "DWlANcTSGcKVGmRk",
   "tags": []
 }
