@@ -8,22 +8,28 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "node-webhook-support",
+      "id": "566ddae1-6bd3-4e71-8b1b-115ffb66e4a5",
       "name": "Webhook - New Support Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [200, 300],
+      "position": [
+        -1680,
+        144
+      ],
       "webhookId": "wf-04-support-webhook"
     },
     {
       "parameters": {
         "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nif (!body.profile_id || !uuidRegex.test(body.profile_id)) {\n  return [{ json: { isValid: false, validationError: 'profile_id must be a valid UUID' } }];\n}\nif (!body.subject || typeof body.subject !== 'string' || body.subject.trim() === '') {\n  return [{ json: { isValid: false, validationError: 'subject is required' } }];\n}\nif (!body.inquiry || typeof body.inquiry !== 'string' || body.inquiry.trim() === '') {\n  return [{ json: { isValid: false, validationError: 'inquiry text is required' } }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    params: {\n      profile_id: String(body.profile_id).trim(),\n      customer_email: body.customer_email ? String(body.customer_email).trim() : null,\n      subject: String(body.subject).trim(),\n      inquiry: String(body.inquiry).trim()\n    }\n  }\n}];"
       },
-      "id": "node-validate-payload",
+      "id": "e689ceab-983e-4bfa-927c-52ee4b9cbf6a",
       "name": "Validate Support Request Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [400, 300]
+      "position": [
+        -1488,
+        144
+      ]
     },
     {
       "parameters": {
@@ -47,13 +53,17 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-check-validity",
+      "id": "054619b2-91f9-4825-893a-1eb5979f5346",
       "name": "Check Payload Validity",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [600, 300]
+      "position": [
+        -1280,
+        144
+      ]
     },
     {
       "parameters": {
@@ -63,18 +73,18 @@
           "responseCode": 400
         }
       },
-      "id": "node-respond-400",
+      "id": "d737fc90-ff41-4fbe-9ec4-f5818d86bba9",
       "name": "Respond 400 - Invalid Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [800, 500]
+      "position": [
+        -1088,
+        336
+      ]
     },
     {
       "parameters": {
-        "resource": "row",
-        "operation": "create",
         "tableId": "support_cases",
-        "dataToSend": "defineBelow",
         "fieldsUi": {
           "fieldValues": [
             {
@@ -96,15 +106,18 @@
           ]
         }
       },
-      "id": "node-create-support-case",
+      "id": "4618bab1-f25c-47d6-9ecf-9567ce26285c",
       "name": "Create Support Case in Supabase",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [800, 300],
+      "position": [
+        -1088,
+        144
+      ],
       "credentials": {
         "supabaseApi": {
-          "id": "",
-          "name": "Supabase Service Role"
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
         }
       }
     },
@@ -112,11 +125,14 @@
       "parameters": {
         "jsCode": "// Extract the created case ID from the Supabase node response.\n// The Supabase create node returns the inserted row directly as json.\nconst caseRow = $input.first().json;\nconst caseId = caseRow.id || (Array.isArray(caseRow) ? caseRow[0]?.id : null);\nconst validatedParams = $('Validate Support Request Payload').item.json.params;\n\nreturn [{\n  json: {\n    case_id: caseId,\n    profile_id: validatedParams.profile_id,\n    subject: validatedParams.subject,\n    inquiry: validatedParams.inquiry,\n    customer_email: validatedParams.customer_email\n  }\n}];"
       },
-      "id": "node-extract-case-id",
+      "id": "bd9e5ea1-6cc4-401e-b1a5-caa6f31ac2d6",
       "name": "Extract Case ID",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 300]
+      "position": [
+        -880,
+        144
+      ]
     },
     {
       "parameters": {
@@ -127,27 +143,33 @@
           "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find relevant banking policy before composing any response.\n\nSTRICT RULES:\n(1) Only state policies, fees, timelines, limits, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) Historical resolved cases from Pinecone may guide tone and format ONLY — never treat a past case response as authoritative policy.\n(3) If retrieved policy does not clearly and directly cover the customer's question, set grounded=false, needs_human=true, and write a draft that says the query is being escalated to a specialist. NEVER invent banking rules.\n(4) Always list the doc_ids you used in the citations array.\n(5) Set confidence between 0.0 and 1.0 reflecting how completely the retrieved policy covers the customer question.\n(6) Draft a polite, professional email response for human review only — no draft is ever sent automatically.\n\nReturn ONLY a structured JSON object with: draft (string), grounded (boolean), confidence (number 0-1), citations (array of doc_id strings), needs_human (boolean)."
         }
       },
-      "id": "node-draft-grounded-reply",
+      "id": "e2daa577-1656-4de9-a911-b305d330351a",
       "name": "Draft Grounded Reply",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
-      "position": [1200, 300]
+      "position": [
+        -688,
+        96
+      ]
     },
     {
       "parameters": {
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-safeguard-20b",
         "options": {
           "temperature": 0.1
         }
       },
-      "id": "node-groq-model",
+      "id": "3de5cbc4-ec01-4372-ba68-fc9bd92dfb3e",
       "name": "Groq Chat Model",
       "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
       "typeVersion": 1,
-      "position": [1100, 500],
+      "position": [
+        -784,
+        336
+      ],
       "credentials": {
         "groqApi": {
-          "id": "",
+          "id": "f0I08FemfuBnyTu1",
           "name": "Groq account"
         }
       }
@@ -165,29 +187,35 @@
           "pineconeNamespace": "banking_policy"
         }
       },
-      "id": "node-policy-knowledge-base",
+      "id": "9c7edf68-3af7-450a-a564-5190e1d58810",
       "name": "Policy Knowledge Base",
       "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
       "typeVersion": 1.3,
-      "position": [1300, 520],
+      "position": [
+        -576,
+        352
+      ],
       "credentials": {
         "pineconeApi": {
-          "id": "",
+          "id": "I2iSFV2W31PGiVaK",
           "name": "Pinecone account"
         }
       }
     },
     {
       "parameters": {},
-      "id": "node-gemini-embeddings",
+      "id": "5d8d5ccc-7fdf-4d17-bef0-dd4ee35bd519",
       "name": "Gemini Embeddings",
       "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
       "typeVersion": 1,
-      "position": [1300, 660],
+      "position": [
+        -576,
+        496
+      ],
       "credentials": {
         "googlePalmApi": {
-          "id": "",
-          "name": "Google Gemini(PaLM) API"
+          "id": "XUIXSrkzGKEEyyXp",
+          "name": "Google Gemini API"
         }
       }
     },
@@ -195,11 +223,14 @@
       "parameters": {
         "jsonSchemaExample": "{\n  \"draft\": \"The full customer reply text, grounded only in retrieved policy.\",\n  \"grounded\": true,\n  \"confidence\": 0.0,\n  \"citations\": [\n    \"doc_id_1\",\n    \"doc_id_2\"\n  ],\n  \"needs_human\": false\n}"
       },
-      "id": "node-draft-parser",
+      "id": "5ed2ff92-2a09-4081-95b7-368a682bfedd",
       "name": "Draft Output Parser",
       "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
       "typeVersion": 1.2,
-      "position": [1450, 400]
+      "position": [
+        -400,
+        224
+      ]
     },
     {
       "parameters": {
@@ -251,13 +282,17 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-grounded-and-confident",
+      "id": "53de04f3-73ff-4c21-aac1-f40e6b77128d",
       "name": "Grounded & Confident? (>= 0.7)",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1650, 300]
+      "position": [
+        -240,
+        144
+      ]
     },
     {
       "parameters": {
@@ -297,11 +332,14 @@
         },
         "options": {}
       },
-      "id": "node-format-grounded-draft",
+      "id": "46ac93bd-4ed1-4837-ba4b-3210f27c6eff",
       "name": "Format Grounded Draft",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1850, 200]
+      "position": [
+        -32,
+        32
+      ]
     },
     {
       "parameters": {
@@ -341,18 +379,18 @@
         },
         "options": {}
       },
-      "id": "node-fallback-draft",
+      "id": "99c5279d-a1f0-43f7-826a-c70ce2684a07",
       "name": "Insufficient Policy Fallback Draft",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1850, 400]
+      "position": [
+        -32,
+        240
+      ]
     },
     {
       "parameters": {
-        "resource": "row",
-        "operation": "create",
         "tableId": "support_case_drafts",
-        "dataToSend": "defineBelow",
         "fieldsUi": {
           "fieldValues": [
             {
@@ -386,21 +424,23 @@
           ]
         }
       },
-      "id": "node-save-support-case-draft",
+      "id": "87076d57-6c24-4867-a596-76475bef8850",
       "name": "Save Support Case Draft in Supabase",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [2050, 300],
+      "position": [
+        176,
+        144
+      ],
       "credentials": {
         "supabaseApi": {
-          "id": "",
-          "name": "Supabase Service Role"
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
         }
       }
     },
     {
       "parameters": {
-        "resource": "row",
         "operation": "update",
         "tableId": "support_cases",
         "filters": {
@@ -412,7 +452,6 @@
             }
           ]
         },
-        "dataToSend": "defineBelow",
         "fieldsUi": {
           "fieldValues": [
             {
@@ -422,15 +461,18 @@
           ]
         }
       },
-      "id": "node-update-case-status",
+      "id": "6496cabd-ae1e-4bd7-994d-3176b2375802",
       "name": "Update Case Status to Awaiting Review",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [2250, 300],
+      "position": [
+        368,
+        144
+      ],
       "credentials": {
         "supabaseApi": {
-          "id": "",
-          "name": "Supabase Service Role"
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
         }
       }
     },
@@ -442,11 +484,14 @@
           "responseCode": 200
         }
       },
-      "id": "node-respond-200-case-created",
+      "id": "706834e8-a523-4740-80bc-b78d0a38e744",
       "name": "Respond 200 - Case Created & Draft Saved",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [2450, 300]
+      "position": [
+        576,
+        144
+      ]
     }
   ],
   "pinData": {},
@@ -633,12 +678,15 @@
   },
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
   },
-  "versionId": "d4e5f6a7-b8c9-40d1-e2f3-445566778899",
+  "versionId": "3f269859-c4a0-49c3-b87b-3f60ac12213d",
   "meta": {
-    "templateId": "wf-04-rag-support-case"
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
-  "id": "WF-04-rag-support-case",
+  "nodeGroups": [],
+  "id": "AzxGlnbC2WyLibC7",
   "tags": []
 }

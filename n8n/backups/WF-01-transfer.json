@@ -12,10 +12,7 @@
       "name": "Webhook - Transfer Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        200,
-        300
-      ],
+      "position": [200, 300],
       "webhookId": "wf-01-transfer-webhook"
     },
     {
@@ -26,18 +23,28 @@
       "name": "Validate Request Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        400,
-        300
-      ]
+      "position": [400, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ $json.isValid }}",
-              "value2": true
+              "id": "is-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -45,11 +52,8 @@
       "id": "node-check-validity",
       "name": "Check Input Validity",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        600,
-        300
-      ]
+      "typeVersion": 2.2,
+      "position": [600, 300]
     },
     {
       "parameters": {
@@ -63,15 +67,14 @@
       "name": "Respond 400 - Invalid Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        600,
-        500
-      ]
+      "position": [800, 500]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/execute_transfer",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -96,18 +99,28 @@
       "name": "Execute Supabase RPC execute_transfer",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        800,
-        300
-      ]
+      "position": [800, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ $json.success === true }}",
-              "value2": true
+              "id": "rpc-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -115,19 +128,39 @@
       "id": "node-check-rpc-result",
       "name": "Check RPC Result",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1000,
-        300
-      ]
+      "typeVersion": 2.2,
+      "position": [1000, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
             {
-              "value1": "={{ $json.success === false || ($json.statusCode >= 400 && $json.statusCode < 500) || typeof $json.error === 'string' }}",
-              "value2": true
+              "id": "biz-error",
+              "leftValue": "={{ $json.success === false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "status-4xx",
+              "leftValue": "={{ ($json.statusCode >= 400 && $json.statusCode < 500) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -135,11 +168,8 @@
       "id": "node-check-error-type",
       "name": "Check Error Type",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1200,
-        400
-      ]
+      "typeVersion": 2.2,
+      "position": [1200, 400]
     },
     {
       "parameters": {
@@ -153,10 +183,7 @@
       "name": "Respond 200 - Transfer Successful",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1200,
-        200
-      ]
+      "position": [1200, 200]
     },
     {
       "parameters": {
@@ -170,10 +197,7 @@
       "name": "Respond 422 - Business Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1400,
-        360
-      ]
+      "position": [1400, 360]
     },
     {
       "parameters": {
@@ -187,10 +211,7 @@
       "name": "Respond 500 - System Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1400,
-        540
-      ]
+      "position": [1400, 540]
     }
   ],
   "pinData": {},

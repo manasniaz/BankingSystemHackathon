@@ -6,36 +6,40 @@
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "hoursInterval": 1
+              "field": "hours"
             }
           ]
         }
       },
-      "id": "node-schedule-trigger",
+      "id": "1ae38aa8-aecc-42f3-84d4-599709982637",
       "name": "Schedule - Hourly Standing Order Check",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [200, 300]
+      "position": [
+        -624,
+        64
+      ]
     },
     {
       "parameters": {
-        "resource": "row",
         "operation": "getAll",
         "tableId": "standing_orders",
         "returnAll": true,
         "filterType": "string",
-        "filterString": "status=eq.active&next_execution_at=lte.{{ $now.toISOString() }}&select=id,source_account_id,destination_account_id,amount,currency,frequency,next_execution_at,retry_count,last_error,status"
+        "filterString": "=status=eq.active&next_execution_at=lte.{{ $now.toISO() }}&select=id,source_account_id,destination_account_id,amount,currency,frequency,next_execution_at,retry_count,last_error,status"
       },
-      "id": "node-fetch-due-orders",
+      "id": "0f01dbc3-ad24-4611-9da5-94404c79d867",
       "name": "Fetch Due Standing Orders",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
-      "position": [400, 300],
+      "position": [
+        -416,
+        64
+      ],
       "credentials": {
         "supabaseApi": {
-          "id": "",
-          "name": "Supabase Service Role"
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
         }
       }
     },
@@ -61,29 +65,35 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-check-orders-exist",
+      "id": "21ac3617-f16f-4b2a-b618-9fc4bcff51ed",
       "name": "Any Orders Due?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [600, 300]
+      "position": [
+        -224,
+        64
+      ]
     },
     {
       "parameters": {
-        "batchSize": 1,
         "options": {}
       },
-      "id": "node-split-orders",
+      "id": "5984bc86-5215-42ab-9e7c-98d74c053ed8",
       "name": "Process Orders One By One",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [800, 200]
+      "position": [
+        -16,
+        -48
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/execute_standing_order",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/execute_standing_order",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
@@ -106,11 +116,20 @@
           }
         }
       },
-      "id": "node-execute-rpc",
+      "id": "da71f762-94c8-44f3-a1ec-58460e17ff30",
       "name": "Execute Supabase RPC execute_standing_order",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1000, 200]
+      "position": [
+        192,
+        -48
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
     },
     {
       "parameters": {
@@ -134,13 +153,17 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-check-execution-result",
+      "id": "fd480f0f-ad34-41a4-ad3f-00412299ac9f",
       "name": "Check Execution Result",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1200, 200]
+      "position": [
+        384,
+        -48
+      ]
     },
     {
       "parameters": {
@@ -174,13 +197,17 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-check-permanent-failure",
+      "id": "9d6b76db-d62f-4495-8ede-cd1061ffa8bc",
       "name": "Permanent Failure?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1400, 320]
+      "position": [
+        592,
+        80
+      ]
     },
     {
       "parameters": {
@@ -208,41 +235,40 @@
         },
         "options": {}
       },
-      "id": "node-format-permanent-failure-alert",
+      "id": "d2cb46e7-ca4f-48e7-a258-d5ac23bc0824",
       "name": "Format Permanent Failure Alert",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1600, 320]
+      "position": [
+        784,
+        80
+      ]
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $vars.ALERT_WEBHOOK_URL }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"event_type\": \"standing_order_permanent_failure_alert\",\n  \"actor_type\": \"n8n\",\n  \"target_type\": \"standing_order\",\n  \"target_id\": \"{{ $json.standing_order_id }}\",\n  \"details\": {\n    \"alert_summary\": \"{{ $json.alert_summary }}\",\n    \"error\": \"{{ $json.error }}\"\n  }\n}",
+        "sendTo": "metonystar1@gmail.com",
+        "subject": "={{ \"ALERT: Standing Order Permanently Failed\" }}",
+        "emailType": "text",
+        "message": "={{ \"Standing Order Permanent Failure Alert\\n\\n\" + $json.alert_summary + \"\\n\\nStanding Order ID: \" + ($json.standing_order_id || \"unknown\") + \"\\nError: \" + ($json.error || \"Unknown\") + \"\\n\\nThis standing order has been permanently disabled after 3 failed retry attempts.\" }}",
         "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
+          "appendAttribution": false
         }
       },
-      "id": "node-dispatch-failure-alert",
-      "name": "Dispatch Alert Delivery Notification",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1800, 320]
+      "id": "6215ce37-0fe2-4721-abb3-487b99c25f25",
+      "name": "Email Ops Team - Standing Order Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        992,
+        80
+      ],
+      "webhookId": "dfed9d43-b9de-4d01-ae43-ce89d26dd747",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -342,14 +368,14 @@
       "main": [
         [
           {
-            "node": "Dispatch Alert Delivery Notification",
+            "node": "Email Ops Team - Standing Order Failed",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Dispatch Alert Delivery Notification": {
+    "Email Ops Team - Standing Order Failed": {
       "main": [
         [
           {
@@ -363,12 +389,17 @@
   },
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
   },
-  "versionId": "b2c3d4e5-f6a7-48b9-c0d1-223344556677",
+  "versionId": "67b86b1f-0885-41e1-b7f2-16d434120637",
   "meta": {
-    "templateId": "wf-02-standing-order"
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp",
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
-  "id": "WF-02-standing-order-scheduler",
+  "nodeGroups": [],
+  "id": "TdNAO2evgEZkXqzz",
   "tags": []
 }

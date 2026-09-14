@@ -12,10 +12,7 @@
       "name": "Webhook - Fraud Assessment Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        200,
-        300
-      ],
+      "position": [200, 300],
       "webhookId": "wf-03-fraud-webhook"
     },
     {
@@ -26,18 +23,28 @@
       "name": "Validate Request Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        400,
-        300
-      ]
+      "position": [400, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ $json.isValid }}",
-              "value2": true
+              "id": "payload-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -45,11 +52,8 @@
       "id": "node-check-validity",
       "name": "Check Payload Validity",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        600,
-        300
-      ]
+      "typeVersion": 2.2,
+      "position": [600, 300]
     },
     {
       "parameters": {
@@ -63,10 +67,7 @@
       "name": "Respond 400 - Invalid Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        600,
-        500
-      ]
+      "position": [800, 500]
     },
     {
       "parameters": {
@@ -96,10 +97,7 @@
       "name": "Call Python Fraud Service",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        800,
-        300
-      ]
+      "position": [800, 300]
     },
     {
       "parameters": {
@@ -109,18 +107,28 @@
       "name": "Validate Python Response Schema",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1000,
-        300
-      ]
+      "position": [1000, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ $json.isSchemaValid }}",
-              "value2": true
+              "id": "schema-valid",
+              "leftValue": "={{ $json.isSchemaValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -128,11 +136,8 @@
       "id": "node-check-python-schema",
       "name": "Python Response Valid?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1200,
-        300
-      ]
+      "typeVersion": 2.2,
+      "position": [1200, 300]
     },
     {
       "parameters": {
@@ -146,18 +151,38 @@
       "name": "Respond 500 - Fraud Service Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1200,
-        500
-      ]
+      "position": [1200, 500]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
             {
-              "value1": "={{ $json.approved === false || $json.risk_score >= 75 }}",
-              "value2": true
+              "id": "not-approved",
+              "leftValue": "={{ $json.approved === false }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "high-risk",
+              "leftValue": "={{ $json.risk_score >= 75 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -165,16 +190,15 @@
       "id": "node-check-fraud-threshold",
       "name": "Fraud Threshold Exceeded?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1400,
-        200
-      ]
+      "typeVersion": 2.2,
+      "position": [1400, 200]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/place_account_hold",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -186,7 +210,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"p_account_id\": \"{{ $('Validate Request Payload').item.json.params.account_id }}\",\n  \"p_hold_type\": \"fraud_investigation\",\n  \"p_is_full_freeze\": true,\n  \"p_amount_held\": {{ $('Validate Request Payload').item.json.params.amount }},\n  \"p_reason\": \"Deterministic fraud alert: {{ $json.reason || 'High risk score detected' }}\",\n  \"p_placed_by_profile_id\": {{ $('Validate Request Payload').item.json.params.profile_id ? '\"' + $('Validate Request Payload').item.json.params.profile_id + '\"' : null }}\n}",
+        "jsonBody": "={\n  \"p_account_id\": \"{{ $('Validate Request Payload').item.json.params.account_id }}\",\n  \"p_hold_type\": \"fraud_investigation\",\n  \"p_is_full_freeze\": true,\n  \"p_amount_held\": {{ $('Validate Request Payload').item.json.params.amount }},\n  \"p_reason\": \"Deterministic fraud alert: {{ $('Validate Python Response Schema').item.json.reason || 'High risk score detected' }}\",\n  \"p_placed_by_profile_id\": {{ $('Validate Request Payload').item.json.params.profile_id ? '\"' + $('Validate Request Payload').item.json.params.profile_id + '\"' : null }}\n}",
         "options": {
           "response": {
             "response": {
@@ -199,10 +223,7 @@
       "name": "Place Account Freeze Hold RPC",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1600,
-        100
-      ]
+      "position": [1600, 100]
     },
     {
       "parameters": {
@@ -216,10 +237,7 @@
       "name": "Respond 200 - Fraud Hold Placed",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1800,
-        100
-      ]
+      "position": [1800, 100]
     },
     {
       "parameters": {
@@ -233,10 +251,7 @@
       "name": "Respond 200 - Fraud Assessment Approved",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1600,
-        300
-      ]
+      "position": [1600, 300]
     }
   ],
   "pinData": {},

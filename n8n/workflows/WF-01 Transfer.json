@@ -8,22 +8,28 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "node-webhook-transfer",
+      "id": "757ef428-f630-4d0d-8c4d-c6427054cea7",
       "name": "Webhook - Transfer Request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [200, 300],
+      "position": [
+        -1008,
+        112
+      ],
       "webhookId": "wf-01-transfer-webhook"
     },
     {
       "parameters": {
         "jsCode": "const body = $input.first().json.body || $input.first().json;\n\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nconst requiredFields = [\n  'source_account_id',\n  'destination_account_id',\n  'amount',\n  'currency',\n  'idempotency_key',\n  'initiated_by_profile_id',\n  'fraud_assessment_id'\n];\n\nconst missing = [];\nfor (const field of requiredFields) {\n  if (body[field] === undefined || body[field] === null || body[field] === '') {\n    missing.push(field);\n  }\n}\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: `Missing required field(s): ${missing.join(', ')}`,\n      params: null\n    }\n  }];\n}\n\nif (!uuidRegex.test(body.source_account_id)) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'source_account_id must be a valid UUID',\n      params: null\n    }\n  }];\n}\n\nif (!uuidRegex.test(body.destination_account_id)) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'destination_account_id must be a valid UUID',\n      params: null\n    }\n  }];\n}\n\nif (!uuidRegex.test(body.initiated_by_profile_id)) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'initiated_by_profile_id must be a valid UUID',\n      params: null\n    }\n  }];\n}\n\nif (!uuidRegex.test(body.fraud_assessment_id)) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'fraud_assessment_id must be a valid UUID',\n      params: null\n    }\n  }];\n}\n\nconst amountNum = Number(body.amount);\nif (isNaN(amountNum) || amountNum <= 0 || !Number.isInteger(amountNum)) {\n  return [{\n    json: {\n      isValid: false,\n      validationError: 'amount must be a positive integer in minor units/cents',\n      params: null\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    params: {\n      p_source_account_id: String(body.source_account_id).trim(),\n      p_destination_account_id: String(body.destination_account_id).trim(),\n      p_amount: amountNum,\n      p_currency: String(body.currency).trim().toUpperCase(),\n      p_idempotency_key: String(body.idempotency_key).trim(),\n      p_initiated_by_profile_id: String(body.initiated_by_profile_id).trim(),\n      p_fraud_assessment_id: String(body.fraud_assessment_id).trim()\n    }\n  }\n}];"
       },
-      "id": "node-validate-payload",
+      "id": "a5dbca68-1acb-4bdf-9132-1d97cd472ae2",
       "name": "Validate Request Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [400, 300]
+      "position": [
+        -800,
+        112
+      ]
     },
     {
       "parameters": {
@@ -47,13 +53,17 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-check-validity",
+      "id": "432c1d6b-cfcc-4850-84eb-905d7e774bb6",
       "name": "Check Input Validity",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [600, 300]
+      "position": [
+        -608,
+        112
+      ]
     },
     {
       "parameters": {
@@ -63,16 +73,19 @@
           "responseCode": 400
         }
       },
-      "id": "node-respond-400",
+      "id": "e7a8cfb6-70b8-4218-b428-6428123815db",
       "name": "Respond 400 - Invalid Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [800, 500]
+      "position": [
+        -400,
+        304
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/execute_transfer",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/execute_transfer",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
@@ -95,11 +108,20 @@
           }
         }
       },
-      "id": "node-execute-rpc",
+      "id": "b4b03bb1-513e-49ff-8d0c-3e39f8eff933",
       "name": "Execute Supabase RPC execute_transfer",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [800, 300]
+      "position": [
+        -400,
+        112
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
     },
     {
       "parameters": {
@@ -123,13 +145,17 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-check-rpc-result",
+      "id": "123966e1-8904-40ac-90a4-3bde8ae08de2",
       "name": "Check RPC Result",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1000, 300]
+      "position": [
+        -208,
+        112
+      ]
     },
     {
       "parameters": {
@@ -163,13 +189,17 @@
               }
             }
           ]
-        }
+        },
+        "options": {}
       },
-      "id": "node-check-error-type",
+      "id": "b195026c-c1e3-4751-a62a-68b8916af404",
       "name": "Check Error Type",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1200, 400]
+      "position": [
+        0,
+        208
+      ]
     },
     {
       "parameters": {
@@ -179,11 +209,14 @@
           "responseCode": 200
         }
       },
-      "id": "node-respond-200",
+      "id": "efc018f6-1a79-45d5-8f8e-fdcf93182568",
       "name": "Respond 200 - Transfer Successful",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1200, 200]
+      "position": [
+        0,
+        0
+      ]
     },
     {
       "parameters": {
@@ -193,11 +226,14 @@
           "responseCode": 422
         }
       },
-      "id": "node-respond-422",
+      "id": "e03b8553-cd5d-4994-aedb-7ff458c5653a",
       "name": "Respond 422 - Business Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1400, 360]
+      "position": [
+        208,
+        160
+      ]
     },
     {
       "parameters": {
@@ -207,11 +243,40 @@
           "responseCode": 500
         }
       },
-      "id": "node-respond-500",
+      "id": "709ff568-960d-459b-9b72-e11fa5639bb5",
       "name": "Respond 500 - System Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1400, 540]
+      "position": [
+        208,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "metonystar1@gmail.com",
+        "subject": "={{ \"Transfer Failed: \" + ($json.error || $json.message || \"Unknown error\") }}",
+        "emailType": "text",
+        "message": "={{ \"A transfer could not be completed and was rolled back.\\n\\nError: \" + ($json.error || $json.message || \"Unknown\") + \"\\nIdempotency Key: \" + ($json.idempotency_key || \"N/A\") + \"\\n\\nNo funds were moved. The transaction was fully rolled back by the database.\" }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "16846f12-1881-423c-87c0-3ae875edd986",
+      "name": "Email Ops - Transfer Failed Notification",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        208,
+        512
+      ],
+      "webhookId": "42e4ae8c-2d44-4996-a575-b88ee79d783d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -302,16 +367,43 @@
           }
         ]
       ]
+    },
+    "Respond 422 - Business Error": {
+      "main": [
+        [
+          {
+            "node": "Email Ops - Transfer Failed Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 500 - System Error": {
+      "main": [
+        [
+          {
+            "node": "Email Ops - Transfer Failed Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
   },
-  "versionId": "a1b2c3d4-e5f6-47a8-b9c0-112233445566",
+  "versionId": "d439245c-7411-4a55-87df-17b102482501",
   "meta": {
-    "templateId": "wf-01-transfer"
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp",
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
-  "id": "WF-01-transfer",
+  "nodeGroups": [],
+  "id": "Nb5Uimn68L0BseRO",
   "tags": []
 }

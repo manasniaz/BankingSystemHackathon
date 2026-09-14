@@ -16,46 +16,49 @@
       "name": "Schedule - Hourly Standing Order Check",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [
-        200,
-        300
-      ]
+      "position": [200, 300]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/standing_orders",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "status",
-              "value": "eq.active"
-            },
-            {
-              "name": "next_execution_at",
-              "value": "=lte.{{ $now.toISOString() }}"
-            }
-          ]
-        },
-        "options": {}
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "standing_orders",
+        "returnAll": true,
+        "filterType": "string",
+        "filterString": "status=eq.active&next_execution_at=lte.{{ $now.toISOString() }}&select=id,source_account_id,destination_account_id,amount,currency,frequency,next_execution_at,retry_count,last_error,status"
       },
       "id": "node-fetch-due-orders",
       "name": "Fetch Due Standing Orders",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        400,
-        300
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [400, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ Array.isArray($input.all()) && $input.all().length > 0 && !!$input.first().json.id }}",
-              "value2": true
+              "id": "orders-exist",
+              "leftValue": "={{ Array.isArray($input.all()) && $input.all().length > 0 && !!$input.first().json.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -63,11 +66,8 @@
       "id": "node-check-orders-exist",
       "name": "Any Orders Due?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        600,
-        300
-      ]
+      "typeVersion": 2.2,
+      "position": [600, 300]
     },
     {
       "parameters": {
@@ -78,15 +78,14 @@
       "name": "Process Orders One By One",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [
-        800,
-        200
-      ]
+      "position": [800, 200]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/execute_standing_order",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -111,18 +110,28 @@
       "name": "Execute Supabase RPC execute_standing_order",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1000,
-        200
-      ]
+      "position": [1000, 200]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ $json.success === true }}",
-              "value2": true
+              "id": "exec-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -130,19 +139,39 @@
       "id": "node-check-execution-result",
       "name": "Check Execution Result",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1200,
-        200
-      ]
+      "typeVersion": 2.2,
+      "position": [1200, 200]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
             {
-              "value1": "={{ $json.status === 'failed' || ($json.retry_count !== undefined && $json.retry_count >= 3) }}",
-              "value2": true
+              "id": "perm-failed",
+              "leftValue": "={{ $json.status === 'failed' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "max-retries",
+              "leftValue": "={{ $json.retry_count !== undefined && $json.retry_count >= 3 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -150,11 +179,8 @@
       "id": "node-check-permanent-failure",
       "name": "Permanent Failure?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1400,
-        320
-      ]
+      "typeVersion": 2.2,
+      "position": [1400, 320]
     },
     {
       "parameters": {
@@ -186,15 +212,12 @@
       "name": "Format Permanent Failure Alert",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [
-        1600,
-        320
-      ]
+      "position": [1600, 320]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.ALERT_WEBHOOK_URL || $vars.SUPABASE_URL + '/rest/v1/audit_log' }}",
+        "url": "={{ $vars.ALERT_WEBHOOK_URL }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -219,10 +242,7 @@
       "name": "Dispatch Alert Delivery Notification",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [
-        1800,
-        320
-      ]
+      "position": [1800, 320]
     }
   ],
   "pinData": {},

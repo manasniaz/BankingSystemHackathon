@@ -12,10 +12,7 @@
       "name": "Webhook - Human Approval Action",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [
-        200,
-        300
-      ],
+      "position": [200, 300],
       "webhookId": "wf-05-approval-webhook"
     },
     {
@@ -26,18 +23,28 @@
       "name": "Validate Approval Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        400,
-        300
-      ]
+      "position": [400, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ $json.isValid }}",
-              "value2": true
+              "id": "payload-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -45,11 +52,8 @@
       "id": "node-check-validity",
       "name": "Check Input Validity",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        600,
-        300
-      ]
+      "typeVersion": 2.2,
+      "position": [600, 300]
     },
     {
       "parameters": {
@@ -63,59 +67,60 @@
       "name": "Respond 400 - Invalid Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        600,
-        500
-      ]
+      "position": [800, 500]
     },
     {
       "parameters": {
-        "method": "GET",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_case_drafts",
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            {
-              "name": "id",
-              "value": "=eq.{{ $json.params.draft_id }}"
-            },
-            {
-              "name": "select",
-              "value": "*,support_cases(*,profiles(*))"
-            }
-          ]
-        },
-        "options": {}
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "support_case_drafts",
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "string",
+        "filterString": "id=eq.{{ $json.params.draft_id }}&select=*,support_cases(*,profiles(*))"
       },
       "id": "node-fetch-draft-and-case",
       "name": "Fetch Draft & Case Info from Supabase",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        800,
-        300
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [800, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
-        "jsCode": "const records = $input.first().json;\nif (!Array.isArray(records) || records.length === 0) {\n  return [{ json: { isPending: false, error: 'Draft record not found in Supabase' } }];\n}\n\nconst draft = records[0];\nif (draft.human_review_state !== 'pending') {\n  return [{ json: { isPending: false, error: `Draft has already been processed with state: ${draft.human_review_state}` } }];\n}\n\nconst supportCase = draft.support_cases;\nif (!supportCase) {\n  return [{ json: { isPending: false, error: 'Associated support case not found' } }];\n}\n\nconst customerEmail = supportCase.profiles ? supportCase.profiles.email : (supportCase.customer_email || null);\nif (!customerEmail) {\n  return [{ json: { isPending: false, error: 'No trusted customer email found on support case profile' } }];\n}\n\nreturn [{\n  json: {\n    isPending: true,\n    draft_id: draft.id,\n    support_case_id: draft.support_case_id,\n    customer_email: customerEmail,\n    subject: supportCase.subject || 'Support Inquiry',\n    stored_groq_draft: draft.groq_draft,\n    action: $('Validate Approval Payload').item.json.params.action,\n    edited_draft: $('Validate Approval Payload').item.json.params.edited_draft,\n    reviewer_profile_id: $('Validate Approval Payload').item.json.params.reviewer_profile_id\n  }\n}];"
+        "jsCode": "const records = $input.all();\nif (!records || records.length === 0 || !records[0].json.id) {\n  return [{ json: { isPending: false, error: 'Draft record not found in Supabase' } }];\n}\n\nconst draft = records[0].json;\nif (draft.human_review_state !== 'pending') {\n  return [{ json: { isPending: false, error: `Draft has already been processed with state: ${draft.human_review_state}` } }];\n}\n\nconst supportCase = draft.support_cases;\nif (!supportCase) {\n  return [{ json: { isPending: false, error: 'Associated support case not found' } }];\n}\n\nconst customerEmail = supportCase.profiles ? supportCase.profiles.email : (supportCase.customer_email || null);\nif (!customerEmail) {\n  return [{ json: { isPending: false, error: 'No trusted customer email found on support case profile' } }];\n}\n\nreturn [{\n  json: {\n    isPending: true,\n    draft_id: draft.id,\n    support_case_id: draft.support_case_id,\n    customer_email: customerEmail,\n    subject: supportCase.subject || 'Support Inquiry',\n    stored_groq_draft: draft.groq_draft,\n    action: $('Validate Approval Payload').item.json.params.action,\n    edited_draft: $('Validate Approval Payload').item.json.params.edited_draft,\n    reviewer_profile_id: $('Validate Approval Payload').item.json.params.reviewer_profile_id\n  }\n}];"
       },
       "id": "node-verify-pending-draft",
       "name": "Verify Draft Exists & Is Pending",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [
-        1000,
-        300
-      ]
+      "position": [1000, 300]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
             {
-              "value1": "={{ $json.isPending }}",
-              "value2": true
+              "id": "is-pending",
+              "leftValue": "={{ $json.isPending }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -123,11 +128,8 @@
       "id": "node-check-pending-status",
       "name": "Is Draft Pending?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1200,
-        300
-      ]
+      "typeVersion": 2.2,
+      "position": [1200, 300]
     },
     {
       "parameters": {
@@ -141,18 +143,38 @@
       "name": "Respond 409 - Invalid State or Not Found",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        1200,
-        500
-      ]
+      "position": [1200, 500]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
             {
-              "value1": "={{ $json.action === 'approve' || $json.action === 'edit' }}",
-              "value2": true
+              "id": "action-approve",
+              "leftValue": "={{ $json.action === 'approve' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "action-edit",
+              "leftValue": "={{ $json.action === 'edit' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
           ]
         }
@@ -160,77 +182,88 @@
       "id": "node-check-approval-action",
       "name": "Action Approved or Edited?",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        1400,
-        200
-      ]
+      "typeVersion": 2.2,
+      "position": [1400, 200]
     },
     {
       "parameters": {
-        "method": "PATCH",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_case_drafts?id=eq.{{ $json.draft_id }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "resource": "row",
+        "operation": "update",
+        "tableId": "support_case_drafts",
+        "filters": {
+          "conditions": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.draft_id }}"
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"human_review_state\": \"{{ $json.action === 'edit' ? 'edited' : 'approved' }}\",\n  \"groq_draft\": {{ JSON.stringify($json.edited_draft || $json.stored_groq_draft) }}\n}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "human_review_state",
+              "fieldValue": "={{ $json.action === 'edit' ? 'edited' : 'approved' }}"
+            },
+            {
+              "fieldId": "groq_draft",
+              "fieldValue": "={{ $json.edited_draft || $json.stored_groq_draft }}"
             }
-          }
+          ]
         }
       },
       "id": "node-update-draft-approved",
       "name": "Update Draft State - Approved",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1600,
-        100
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1600, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
-        "method": "PATCH",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_cases?id=eq.{{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "resource": "row",
+        "operation": "update",
+        "tableId": "support_cases",
+        "filters": {
+          "conditions": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}"
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"status\": \"resolved\",\n  \"final_sent_response\": {{ JSON.stringify($('Verify Draft Exists & Is Pending').item.json.edited_draft || $('Verify Draft Exists & Is Pending').item.json.stored_groq_draft) }}\n}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "resolved"
+            },
+            {
+              "fieldId": "final_sent_response",
+              "fieldValue": "={{ $('Verify Draft Exists & Is Pending').item.json.edited_draft || $('Verify Draft Exists & Is Pending').item.json.stored_groq_draft }}"
             }
-          }
+          ]
         }
       },
       "id": "node-update-case-resolved",
       "name": "Update Case Status - Resolved",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1800,
-        100
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1800, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
@@ -240,49 +273,68 @@
         "sendTo": "={{ $('Verify Draft Exists & Is Pending').item.json.customer_email }}",
         "subject": "=RE: {{ $('Verify Draft Exists & Is Pending').item.json.subject }}",
         "message": "={{ $('Verify Draft Exists & Is Pending').item.json.edited_draft || $('Verify Draft Exists & Is Pending').item.json.stored_groq_draft }}",
-        "options": {}
+        "options": {
+          "appendAttribution": false
+        }
       },
       "id": "node-send-gmail",
       "name": "Send Customer Email via Gmail",
       "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        2000,
-        100
-      ]
+      "typeVersion": 2.2,
+      "position": [2000, 100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail OAuth2"
+        }
+      }
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/audit_log",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "resource": "row",
+        "operation": "create",
+        "tableId": "audit_log",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "fieldId": "event_type",
+              "fieldValue": "support_case_resolved"
+            },
+            {
+              "fieldId": "actor_type",
+              "fieldValue": "n8n"
+            },
+            {
+              "fieldId": "actor_id",
+              "fieldValue": "={{ $('Verify Draft Exists & Is Pending').item.json.reviewer_profile_id || null }}"
+            },
+            {
+              "fieldId": "target_type",
+              "fieldValue": "support_case"
+            },
+            {
+              "fieldId": "target_id",
+              "fieldValue": "={{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}"
+            },
+            {
+              "fieldId": "details",
+              "fieldValue": "={{ JSON.stringify({ draft_id: $('Verify Draft Exists & Is Pending').item.json.draft_id, action: $('Verify Draft Exists & Is Pending').item.json.action, email_sent: true }) }}"
             }
           ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"event_type\": \"support_case_resolved\",\n  \"actor_type\": \"n8n\",\n  \"actor_id\": {{ $('Verify Draft Exists & Is Pending').item.json.reviewer_profile_id ? '\"' + $('Verify Draft Exists & Is Pending').item.json.reviewer_profile_id + '\"' : null }},\n  \"target_type\": \"support_case\",\n  \"target_id\": \"{{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}\",\n  \"details\": {\n    \"draft_id\": \"{{ $('Verify Draft Exists & Is Pending').item.json.draft_id }}\",\n    \"action\": \"{{ $('Verify Draft Exists & Is Pending').item.json.action }}\",\n    \"email_sent\": true\n  }\n}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
         }
       },
       "id": "node-audit-log-approved",
       "name": "Audit Log - Case Approved & Sent",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2200,
-        100
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2200, 100],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
@@ -296,109 +348,126 @@
       "name": "Respond 200 - Approved & Email Sent",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        2400,
-        100
-      ]
+      "position": [2400, 100]
     },
     {
       "parameters": {
-        "method": "PATCH",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_case_drafts?id=eq.{{ $json.draft_id }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "resource": "row",
+        "operation": "update",
+        "tableId": "support_case_drafts",
+        "filters": {
+          "conditions": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.draft_id }}"
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"human_review_state\": \"rejected\"\n}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "human_review_state",
+              "fieldValue": "rejected"
             }
-          }
+          ]
         }
       },
       "id": "node-update-draft-rejected",
       "name": "Update Draft State - Rejected",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1600,
-        300
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1600, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
-        "method": "PATCH",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/support_cases?id=eq.{{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "resource": "row",
+        "operation": "update",
+        "tableId": "support_cases",
+        "filters": {
+          "conditions": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}"
             }
           ]
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"status\": \"closed\"\n}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "closed"
             }
-          }
+          ]
         }
       },
       "id": "node-update-case-closed",
       "name": "Update Case Status - Closed",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1800,
-        300
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1800, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/audit_log",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "resource": "row",
+        "operation": "create",
+        "tableId": "audit_log",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "fieldId": "event_type",
+              "fieldValue": "support_case_rejected"
+            },
+            {
+              "fieldId": "actor_type",
+              "fieldValue": "n8n"
+            },
+            {
+              "fieldId": "actor_id",
+              "fieldValue": "={{ $('Verify Draft Exists & Is Pending').item.json.reviewer_profile_id || null }}"
+            },
+            {
+              "fieldId": "target_type",
+              "fieldValue": "support_case"
+            },
+            {
+              "fieldId": "target_id",
+              "fieldValue": "={{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}"
+            },
+            {
+              "fieldId": "details",
+              "fieldValue": "={{ JSON.stringify({ draft_id: $('Verify Draft Exists & Is Pending').item.json.draft_id, action: 'rejected', email_sent: false }) }}"
             }
           ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"event_type\": \"support_case_rejected\",\n  \"actor_type\": \"n8n\",\n  \"actor_id\": {{ $('Verify Draft Exists & Is Pending').item.json.reviewer_profile_id ? '\"' + $('Verify Draft Exists & Is Pending').item.json.reviewer_profile_id + '\"' : null }},\n  \"target_type\": \"support_case\",\n  \"target_id\": \"{{ $('Verify Draft Exists & Is Pending').item.json.support_case_id }}\",\n  \"details\": {\n    \"draft_id\": \"{{ $('Verify Draft Exists & Is Pending').item.json.draft_id }}\",\n    \"action\": \"rejected\",\n    \"email_sent\": false\n  }\n}",
-        "options": {
-          "response": {
-            "response": {
-              "neverError": true
-            }
-          }
         }
       },
       "id": "node-audit-log-rejected",
       "name": "Audit Log - Draft Rejected",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2000,
-        300
-      ]
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2000, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "",
+          "name": "Supabase Service Role"
+        }
+      }
     },
     {
       "parameters": {
@@ -412,10 +481,7 @@
       "name": "Respond 200 - Draft Rejected (No Email)",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [
-        2200,
-        300
-      ]
+      "position": [2200, 300]
     }
   ],
   "pinData": {},
