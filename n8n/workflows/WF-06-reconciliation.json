@@ -187,7 +187,7 @@
     },
     {
       "parameters": {
-        "sendTo": "metonystar1@gmail.com",
+        "sendTo": "ops-team@yourbank.example",
         "subject": "={{ \"CRITICAL: Financial Reconciliation Mismatch - \" + $json.run_date }}",
         "emailType": "text",
         "message": "={{ \"CRITICAL ALERT: Financial reconciliation mismatch detected.\\n\\nRun Date: \" + $json.run_date + \"\\nReconciliation ID: \" + $json.reconciliation_id + \"\\nTotal System Debits: \" + $json.total_debits + \"\\nTotal System Credits: \" + $json.total_credits + \"\\n\\nDiscrepancies: \" + JSON.stringify($json.discrepancies) + \"\\n\\nImmediate human review is required.\" }}",

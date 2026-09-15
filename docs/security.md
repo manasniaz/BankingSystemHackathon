@@ -18,7 +18,7 @@
 ## Credential handling
 
 - Supabase `service_role` key, Groq/Pinecone/Gemini API keys, and the Gmail OAuth2 token live only in n8n Cloud's credential store and Railway's environment variables. None of them are committed to this repository (`python/.env.example` ships placeholder values only).
-- Groq/Gemini (the LLM layer) only ever receive customer inquiry text and retrieved policy snippets — never account numbers, balances, or amounts. They cannot write to any financial table; their only write path is `support_case_drafts`, which itself cannot reach a customer without the human approval gate in WF-05.
+- Groq/Gemini (the LLM layer) only ever receive customer inquiry text and retrieved policy snippets — never account numbers, balances, or amounts. They cannot write to any financial table; their only write path is `support_case_drafts`. A grounded, confident (≥0.7) answer is sent automatically; anything less confident is held there and cannot reach a customer without the human approval gate in WF-05.
 
 ## Email-based identity (specific to this system's design)
 

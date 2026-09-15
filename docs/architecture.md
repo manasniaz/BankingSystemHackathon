@@ -1,5 +1,7 @@
 # TASK 1 — LOCKED ARCHITECTURE
 
+> **Note:** this is the original pre-build architecture snapshot, kept as-is for history. Two tables and several RPCs were added afterward and aren't reflected below: `joint_account_invitations` (migration 005), `loans` plus the `TREASURY-MAIN`/`BANK-CAPITAL` accounts and `deposit_funds`/`apply_for_loan`/`approve_loan`/`reject_loan` RPCs (migrations 006–007). See [`database.md`](database.md) for the authoritative, up-to-date migration history and [`decisions.md`](decisions.md) (Sessions 2 and 7) for why each was added.
+
 ---
 
 ## 1. FINAL TABLE LIST

@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Public RAG access: profile_id is optional. Anyone can ask a policy question;\n// a bank customer is simply recognized (profile_id set), everyone else is\n// tracked by their verified sender email only (customer_email).\nconst profileId = body.profile_id && uuidRegex.test(String(body.profile_id).trim()) ? String(body.profile_id).trim() : null;\nconst customerEmail = String(body.customer_email || '').trim().toLowerCase();\n\nif (!profileId && !customerEmail) {\n  throw new Error('Either profile_id or customer_email is required to identify the inquirer');\n}\n\nconst subject = String(body.subject || '').trim();\n// Defensive fallback: if the body/inquiry text is empty (e.g. an email with\n// everything crammed into the subject line), fall back to the subject rather\n// than hard-failing the whole sub-workflow with no reply to the customer.\nconst inquiry = String(body.inquiry || body.bodyText || '').trim() || subject;\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: profileId,\n      customer_email: customerEmail,\n      inquirer_type: profileId ? 'customer' : 'public',\n      subject: subject || 'General Banking Inquiry',\n      inquiry: inquiry\n    }\n  }\n}];"
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Public RAG access: profile_id is optional. Anyone can ask a policy question;\n// a bank customer is simply recognized (profile_id set), everyone else is\n// tracked by their verified sender email only (customer_email).\nconst profileId = body.profile_id && uuidRegex.test(String(body.profile_id).trim()) ? String(body.profile_id).trim() : null;\n// Registered-customer calls from WF-00 pass the raw email metadata object\n// through (fromEmail), not the customer_email/inquiry field names -- accept\n// both so a real send-to address is always available downstream.\nconst customerEmail = String(body.customer_email || body.fromEmail || '').trim().toLowerCase();\n\nif (!profileId && !customerEmail) {\n  throw new Error('Either profile_id or customer_email is required to identify the inquirer');\n}\n\nconst subject = String(body.subject || '').trim();\n// Defensive fallback: if the body/inquiry text is empty (e.g. an email with\n// everything crammed into the subject line), fall back to the subject rather\n// than hard-failing the whole sub-workflow with no reply to the customer.\nconst inquiry = String(body.inquiry || body.bodyText || '').trim() || subject;\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: profileId,\n      customer_email: customerEmail,\n      inquirer_type: profileId ? 'customer' : 'public',\n      subject: subject || 'General Banking Inquiry',\n      inquiry: inquiry\n    }\n  }\n}];"
       },
       "id": "71f8510f-be32-4a0d-b4ae-428735e405c3",
       "name": "Validate Support Request Payload",
@@ -355,7 +355,7 @@
             },
             {
               "fieldId": "human_review_state",
-              "fieldValue": "pending"
+              "fieldValue": "={{ $json.threshold_exceeded ? 'approved' : 'pending' }}"
             }
           ]
         }
@@ -392,13 +392,13 @@
           "fieldValues": [
             {
               "fieldId": "status",
-              "fieldValue": "awaiting_human_review"
+              "fieldValue": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded ? 'resolved' : 'awaiting_human_review' }}"
             }
           ]
         }
       },
       "id": "45b196b8-035b-4e97-802c-4cd3e71edaec",
-      "name": "Update Case Status to Awaiting Review",
+      "name": "Update Case Status",
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
@@ -432,7 +432,7 @@
               "id": "rag_status",
               "name": "status",
               "type": "string",
-              "value": "awaiting_human_review"
+              "value": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded ? 'resolved' : 'awaiting_human_review' }}"
             },
             {
               "id": "rag_grounded",
@@ -528,6 +528,66 @@
         1440,
         320
       ]
+    },
+    {
+      "id": "7871fb94-fe7f-4849-9fbb-105bcceff1c5",
+      "name": "Auto-Answerable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "is-auto-answerable",
+              "leftValue": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ee9e0a84-d9b8-4081-b879-ac7a1c8451e8",
+      "name": "Send Auto-Approved Policy Answer",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2048,
+        220
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Validate Support Request Payload').item.json.params.customer_email }}",
+        "subject": "=RE: {{ $('Validate Support Request Payload').item.json.params.subject }}",
+        "emailType": "text",
+        "message": "=Hello,\n\n{{ $('Save Support Case Draft in Supabase').item.json.groq_draft }}\n\nReference: {{ $('Extract Case ID').item.json.case_id }}\n\nThis answer is grounded in our official policy documents. If it doesn't fully address your question, just reply and a specialist will follow up.\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "0a913d54-65fe-4a43-b118-d915ac499a03",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -692,18 +752,7 @@
       "main": [
         [
           {
-            "node": "Update Case Status to Awaiting Review",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Update Case Status to Awaiting Review": {
-      "main": [
-        [
-          {
-            "node": "Format RAG Result",
+            "node": "Update Case Status",
             "type": "main",
             "index": 0
           }
@@ -731,6 +780,46 @@
           }
         ]
       ]
+    },
+    "Update Case Status": {
+      "main": [
+        [
+          {
+            "node": "Auto-Answerable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Answerable?": {
+      "main": [
+        [
+          {
+            "node": "Send Auto-Approved Policy Answer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format RAG Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Auto-Approved Policy Answer": {
+      "main": [
+        [
+          {
+            "node": "Format RAG Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -738,7 +827,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "d4826841-b532-40e4-a306-9fd1c3e839ce",
+  "versionId": "196a6674-a1b2-4e80-8085-637f183358b6",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

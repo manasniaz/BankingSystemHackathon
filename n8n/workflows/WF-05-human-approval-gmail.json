@@ -522,6 +522,375 @@
         96,
         32
       ]
+    },
+    {
+      "id": "92266036-cfd3-47c1-b557-6b8b88c791c7",
+      "name": "Webhook - Loan Approval Action",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1920,
+        600
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "approve-loan",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "f47b34c0-8869-4135-af99-16413c326976"
+    },
+    {
+      "id": "7bb24b4e-df7f-4bea-9254-6d46725adba2",
+      "name": "Validate Loan Approval Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        600
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nif (!body.loan_id || !uuidRegex.test(body.loan_id)) {\n  return [{ json: { isValid: false, validationError: 'loan_id must be a valid UUID' } }];\n}\n\nconst action = String(body.action || '').trim().toLowerCase();\nif (!['approve', 'reject'].includes(action)) {\n  return [{ json: { isValid: false, validationError: 'action must be one of: approve, reject' } }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    validationError: null,\n    params: {\n      loan_id: String(body.loan_id).trim(),\n      action: action,\n      reason: body.reason ? String(body.reason).trim() : null,\n      reviewer_profile_id: body.reviewer_profile_id && uuidRegex.test(body.reviewer_profile_id) ? String(body.reviewer_profile_id).trim() : null\n    }\n  }\n}];"
+      }
+    },
+    {
+      "id": "94720456-c52e-4f57-b854-6437fea3234b",
+      "name": "Check Loan Payload Validity",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1520,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "loan-payload-valid",
+              "leftValue": "={{ $json.isValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2112ee4c-fed8-47c2-927f-82802c5108ce",
+      "name": "Respond 400 - Invalid Loan Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -1312,
+        792
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": {{ JSON.stringify($json.validationError) }},\n  \"code\": \"INVALID_INPUT\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "558b9579-dff7-4db1-b4dc-240fa50806e2",
+      "name": "Fetch Loan & Profile Info",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -1312,
+        600
+      ],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "loans",
+        "limit": 1,
+        "filterType": "string",
+        "filterString": "=id=eq.{{ $('Validate Loan Approval Payload').item.json.params.loan_id }}&select=*,profiles!loans_profile_id_fkey(*)"
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "27088ca0-92e5-4a07-a519-20c80b07e4ca",
+      "name": "Verify Loan Exists & Pending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        600
+      ],
+      "parameters": {
+        "jsCode": "const records = $input.all();\nif (!records || records.length === 0 || !records[0].json.id) {\n  return [{ json: { isPending: false, error: 'Loan record not found' } }];\n}\n\nconst loan = records[0].json;\nif (loan.status !== 'pending_review') {\n  return [{ json: { isPending: false, error: `Loan is not pending review (current status: ${loan.status})` } }];\n}\n\nconst profile = loan.profiles;\nif (!profile || !profile.email) {\n  return [{ json: { isPending: false, error: 'No customer profile/email found for this loan' } }];\n}\n\nreturn [{\n  json: {\n    isPending: true,\n    loan_id: loan.id,\n    customer_email: profile.email,\n    full_name: profile.full_name,\n    principal_amount: loan.principal_amount,\n    total_repayable: loan.total_repayable,\n    monthly_payment_amount: loan.monthly_payment_amount,\n    term_months: loan.term_months,\n    action: $('Validate Loan Approval Payload').item.json.params.action,\n    reason: $('Validate Loan Approval Payload').item.json.params.reason,\n    reviewer_profile_id: $('Validate Loan Approval Payload').item.json.params.reviewer_profile_id\n  }\n}];"
+      }
+    },
+    {
+      "id": "cbbcc4c2-1799-405a-bd63-a6527c9182b2",
+      "name": "Is Loan Pending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -912,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "loan-is-pending",
+              "leftValue": "={{ $json.isPending }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d52d24a9-6e85-492f-9d19-8cca0bf12c90",
+      "name": "Respond 409 - Loan Not Pending or Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -912,
+        792
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": {{ JSON.stringify($json.error) }},\n  \"code\": \"INVALID_STATE_OR_NOT_FOUND\"\n}",
+        "options": {
+          "responseCode": 409
+        }
+      }
+    },
+    {
+      "id": "d4f9f5b3-5f2f-4770-9e62-1d0680348093",
+      "name": "Loan Action Approve or Reject?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -720,
+        504
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "loan-action-approve",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "01629a80-fbee-4b63-932f-af83673784c9",
+      "name": "Call approve_loan RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -512,
+        392
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/approve_loan",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_loan_id: $json.loan_id, p_approved_by_profile_id: $json.reviewer_profile_id || null }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "f84c2063-f178-4c9e-b9c2-a993873c21d1",
+      "name": "Send Loan Approved Email (Ops Action)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -304,
+        392
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Verify Loan Exists & Pending').item.json.customer_email }}",
+        "subject": "Your loan application has been approved",
+        "emailType": "text",
+        "message": "=Hello {{ $('Verify Loan Exists & Pending').item.json.full_name }},\n\nGood news -- your loan application has been reviewed and approved. Funds have been disbursed to your account.\n\nPrincipal: Rs {{ ($('Verify Loan Exists & Pending').item.json.principal_amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($('Verify Loan Exists & Pending').item.json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $('Verify Loan Exists & Pending').item.json.term_months }} months\nMonthly repayment: Rs {{ ($('Verify Loan Exists & Pending').item.json.monthly_payment_amount / 100).toFixed(2) }}\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "ade55f31-1c11-4ab5-9f75-35bd84afca23",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "9a50cfa3-4b78-4cbd-86ae-43cba24e4289",
+      "name": "Respond 200 - Loan Approved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -96,
+        392
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"approved\": true,\n  \"loan_id\": \"{{ $('Verify Loan Exists & Pending').item.json.loan_id }}\",\n  \"status\": \"active\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "d0ac4b7b-f33f-4515-951a-a88d5cdb2056",
+      "name": "Call reject_loan RPC",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -512,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/reject_loan",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_loan_id: $json.loan_id, p_rejected_by_profile_id: $json.reviewer_profile_id || null, p_reason: $json.reason || null }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "49fc10a0-ac16-478a-8a4e-2606dc17029a",
+      "name": "Send Loan Rejected Email (Ops Action)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -304,
+        600
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Verify Loan Exists & Pending').item.json.customer_email }}",
+        "subject": "Update on your loan application",
+        "emailType": "text",
+        "message": "=Hello {{ $('Verify Loan Exists & Pending').item.json.full_name }},\n\nAfter review, we're unable to approve your loan application at this time.{{ $('Verify Loan Exists & Pending').item.json.reason ? '\\n\\nReason: ' + $('Verify Loan Exists & Pending').item.json.reason : '' }}\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "483b5e28-d896-45ef-9a3d-b263a0dc2b2c",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "6f3b7699-fa64-4382-9159-0da271b22814",
+      "name": "Respond 200 - Loan Rejected",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -96,
+        600
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"approved\": false,\n  \"loan_id\": \"{{ $('Verify Loan Exists & Pending').item.json.loan_id }}\",\n  \"status\": \"rejected\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      }
     }
   ],
   "connections": {
@@ -699,6 +1068,148 @@
           }
         ]
       ]
+    },
+    "Webhook - Loan Approval Action": {
+      "main": [
+        [
+          {
+            "node": "Validate Loan Approval Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Loan Approval Payload": {
+      "main": [
+        [
+          {
+            "node": "Check Loan Payload Validity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Loan Payload Validity": {
+      "main": [
+        [
+          {
+            "node": "Fetch Loan & Profile Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 - Invalid Loan Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Loan & Profile Info": {
+      "main": [
+        [
+          {
+            "node": "Verify Loan Exists & Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Loan Exists & Pending": {
+      "main": [
+        [
+          {
+            "node": "Is Loan Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Loan Pending?": {
+      "main": [
+        [
+          {
+            "node": "Loan Action Approve or Reject?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 409 - Loan Not Pending or Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loan Action Approve or Reject?": {
+      "main": [
+        [
+          {
+            "node": "Call approve_loan RPC",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call reject_loan RPC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call approve_loan RPC": {
+      "main": [
+        [
+          {
+            "node": "Send Loan Approved Email (Ops Action)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Loan Approved Email (Ops Action)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 - Loan Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call reject_loan RPC": {
+      "main": [
+        [
+          {
+            "node": "Send Loan Rejected Email (Ops Action)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Loan Rejected Email (Ops Action)": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 - Loan Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -706,7 +1217,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "8aac45af-b52c-411a-98e5-51f0cf17b92c",
+  "versionId": "4406f9ba-3d5a-44fa-b160-9df379d41891",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

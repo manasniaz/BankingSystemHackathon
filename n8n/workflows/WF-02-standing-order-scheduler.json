@@ -246,7 +246,7 @@
     },
     {
       "parameters": {
-        "sendTo": "metonystar1@gmail.com",
+        "sendTo": "ops-team@yourbank.example",
         "subject": "ALERT: Standing Order Permanently Failed",
         "emailType": "text",
         "message": "={{ \"Standing Order Permanent Failure Alert\\n\\n\" + $json.alert_summary + \"\\n\\nStanding Order ID: \" + ($json.standing_order_id || \"unknown\") + \"\\nError: \" + ($json.error || \"Unknown\") + \"\\n\\nThis standing order has been permanently disabled after 3 failed retry attempts.\" }}",

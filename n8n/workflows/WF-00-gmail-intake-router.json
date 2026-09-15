@@ -150,7 +150,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add)\\b/.test(text);\n  const wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize)\\b/.test(text);\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = meta.bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  let amountMinor = 0;\n  const amtMatch = rawText.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      amountMinor = Math.round(major * 100);\n    }\n  }\n\n  let destAccount = null;\n  const acctMatch = meta.bodyText.match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = meta.bodyText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  const primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail\n  }\n}];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add)\\b/.test(text);\n  const wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nfunction extractAmountMinor(text) {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  const amtMatch = text.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = meta.bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let destAccount = null;\n  const acctMatch = meta.bodyText.match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = meta.bodyText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let termMonths = 12;\n  const termMatch = rawText.match(/(\\d+)\\s*(month|months|year|years)/i);\n  if (termMatch) {\n    const n = parseInt(termMatch[1], 10);\n    termMonths = /year/i.test(termMatch[2]) ? n * 12 : n;\n  }\n\n  loanDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor,\n    term_months: termMonths\n  };\n} else if (intent === 'DEPOSIT') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  depositDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
       },
       "id": "384b42dd-9313-4a0f-b573-d225d837e452",
       "name": "Classify Intent & Authorize Request",
@@ -355,6 +355,54 @@
               },
               "outputKey": "Joint Open",
               "renameOutput": true
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-loan",
+                    "leftValue": "={{ $json.intent }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "LOAN_APPLICATION"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "outputKey": "Loan Application",
+              "renameOutput": true
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-deposit",
+                    "leftValue": "={{ $json.intent }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "DEPOSIT"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "outputKey": "Deposit",
+              "renameOutput": true
             }
           ]
         },
@@ -374,7 +422,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst accounts = item.authorizedAccounts || [];\n\nlet balanceMsg = `Hello ${item.full_name},\n\nHere is your authorized account balance summary:\n\n`;\n\nif (accounts.length === 0) {\n  balanceMsg += \"No active accounts found for your profile.\";\n} else {\n  accounts.forEach(acc => {\n    const formatted = (acc.balance / 100).toFixed(2);\n    balanceMsg += `- Account ${acc.account_number} (${acc.account_type.toUpperCase()}, Role: ${acc.role}): $${formatted} ${acc.currency} (Status: ${acc.status})\n`;\n  });\n}\n\nbalanceMsg += `\nThank you for banking with Digital Bank.`;\n\nreturn [{ json: { fromEmail: item.fromEmail, subject: item.subject, message: balanceMsg, profile_id: item.profile_id } }];"
+        "jsCode": "const item = $input.first().json;\nconst accounts = item.authorizedAccounts || [];\n\nlet balanceMsg = `Hello ${item.full_name},\n\nHere is your authorized account balance summary:\n\n`;\n\nif (accounts.length === 0) {\n  balanceMsg += \"No active accounts found for your profile.\";\n} else {\n  accounts.forEach(acc => {\n    const formatted = (acc.balance / 100).toFixed(2);\n    balanceMsg += `- Account ${acc.account_number} (${acc.account_type.toUpperCase()}, Role: ${acc.role}): Rs ${formatted} ${acc.currency} (Status: ${acc.status})\n`;\n  });\n}\n\nbalanceMsg += `\nThank you for banking with Digital Bank.`;\n\nreturn [{ json: { fromEmail: item.fromEmail, subject: item.subject, message: balanceMsg, profile_id: item.profile_id } }];"
       },
       "id": "6169ecda-160c-4b20-b0a6-293ccabcb705",
       "name": "Format Balance Response",
@@ -466,7 +514,16 @@
           "cachedResultUrl": "/workflow/GLAY2Ob2nfxsFh7t",
           "cachedResultName": "WF-04 RAG Support"
         },
-        "options": {}
+        "options": {},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "profile_id": "={{ $json.profile_id }}",
+            "customer_email": "={{ $json.fromEmail }}",
+            "subject": "={{ $json.subject }}",
+            "inquiry": "={{ $json.bodyText }}"
+          }
+        }
       },
       "id": "89aad436-478e-495c-ab15-32c9cb21d496",
       "name": "Execute WF-04 RAG Support Sub-Workflow",
@@ -1175,6 +1232,9 @@
       }
     },
     {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = ((item.subject||'') + ' ' + (item.bodyText||'')).toLowerCase();\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(text)) accountType = 'savings';\n\nif (!item.jointInviteeEmail) {\n  return [{ json: { ok: false, reason: 'We could not find an email address to invite. Please include it clearly, for example: \"I want to open a joint account with bob@gmail.com\".', fromEmail: item.fromEmail, subject: item.subject, full_name: item.full_name } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  inviter_profile_id: item.profile_id,\n  invitee_email: item.jointInviteeEmail,\n  account_type: accountType,\n  fromEmail: item.fromEmail,\n  subject: item.subject,\n  full_name: item.full_name\n} }];"
+      },
       "id": "1ed19b61-d11d-41eb-abef-3c2a99406d1c",
       "name": "Resolve Joint Invitation Request",
       "type": "n8n-nodes-base.code",
@@ -1182,20 +1242,9 @@
       "position": [
         0,
         1200
-      ],
-      "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst text = ((item.subject||'') + ' ' + (item.bodyText||'')).toLowerCase();\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(text)) accountType = 'savings';\n\nif (!item.jointInviteeEmail) {\n  return [{ json: { ok: false, reason: 'We could not find an email address to invite. Please include it clearly, for example: \"I want to open a joint account with bob@gmail.com\".', fromEmail: item.fromEmail, subject: item.subject, full_name: item.full_name } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  inviter_profile_id: item.profile_id,\n  invitee_email: item.jointInviteeEmail,\n  account_type: accountType,\n  fromEmail: item.fromEmail,\n  subject: item.subject,\n  full_name: item.full_name\n} }];"
-      }
+      ]
     },
     {
-      "id": "5e6fb659-6184-4d10-86d1-ccbad68a3eb5",
-      "name": "Joint Invitation Request Valid?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        220,
-        1200
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -1219,17 +1268,17 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "5e6fb659-6184-4d10-86d1-ccbad68a3eb5",
+      "name": "Joint Invitation Request Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        1200
+      ]
     },
     {
-      "id": "e43ecbd7-9ff4-4ab3-bd4f-49a6414307e8",
-      "name": "Send Joint Invitation Rejected Email",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        440,
-        1320
-      ],
       "parameters": {
         "sendTo": "={{ $json.fromEmail }}",
         "subject": "=RE: {{ $json.subject }} - Joint Account Request",
@@ -1239,6 +1288,14 @@
           "appendAttribution": false
         }
       },
+      "id": "e43ecbd7-9ff4-4ab3-bd4f-49a6414307e8",
+      "name": "Send Joint Invitation Rejected Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        448,
+        1328
+      ],
       "webhookId": "228526c1-642c-43b1-a56d-24f69abbe78f",
       "credentials": {
         "gmailOAuth2": {
@@ -1248,14 +1305,6 @@
       }
     },
     {
-      "id": "157f4403-39e9-4764-99ee-598a9958d9f4",
-      "name": "Create Joint Invitation",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        440,
-        1120
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/create_joint_account_invitation",
@@ -1281,6 +1330,14 @@
           }
         }
       },
+      "id": "157f4403-39e9-4764-99ee-598a9958d9f4",
+      "name": "Create Joint Invitation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        1120
+      ],
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",
@@ -1289,14 +1346,6 @@
       }
     },
     {
-      "id": "157174bd-4417-431b-8d8c-72e96fecb74f",
-      "name": "Send Joint Invitation to Invitee",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        660,
-        1040
-      ],
       "parameters": {
         "sendTo": "={{ $('Resolve Joint Invitation Request').item.json.invitee_email }}",
         "subject": "=Joint Account Invitation from {{ $('Resolve Joint Invitation Request').item.json.full_name }}",
@@ -1306,6 +1355,14 @@
           "appendAttribution": false
         }
       },
+      "id": "157174bd-4417-431b-8d8c-72e96fecb74f",
+      "name": "Send Joint Invitation to Invitee",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        672,
+        1040
+      ],
       "webhookId": "bbe92d36-e3a4-459f-b8d2-9045fdce3c56",
       "credentials": {
         "gmailOAuth2": {
@@ -1315,14 +1372,6 @@
       }
     },
     {
-      "id": "323dbb19-5af1-41a1-8bde-41e3a8218033",
-      "name": "Send Joint Invitation Confirmation to Inviter",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        660,
-        1200
-      ],
       "parameters": {
         "sendTo": "={{ $('Resolve Joint Invitation Request').item.json.fromEmail }}",
         "subject": "=RE: {{ $('Resolve Joint Invitation Request').item.json.subject }}",
@@ -1332,6 +1381,14 @@
           "appendAttribution": false
         }
       },
+      "id": "323dbb19-5af1-41a1-8bde-41e3a8218033",
+      "name": "Send Joint Invitation Confirmation to Inviter",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        672,
+        1200
+      ],
       "webhookId": "207edd5e-5c3a-46ae-9ff5-085dac20728c",
       "credentials": {
         "gmailOAuth2": {
@@ -1341,14 +1398,6 @@
       }
     },
     {
-      "id": "45bed1a8-3bc4-40ae-a56d-196e00f21aed",
-      "name": "Check Pending Joint Invitation",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [
-        -1168,
-        700
-      ],
       "parameters": {
         "operation": "getAll",
         "tableId": "joint_account_invitations",
@@ -1356,6 +1405,14 @@
         "filterType": "string",
         "filterString": "=invitee_email=eq.{{ $('Extract Email Metadata').item.json.fromEmail }}&status=eq.pending&order=created_at.desc"
       },
+      "id": "45bed1a8-3bc4-40ae-a56d-196e00f21aed",
+      "name": "Check Pending Joint Invitation",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -1376,
+        704
+      ],
       "alwaysOutputData": true,
       "credentials": {
         "supabaseApi": {
@@ -1365,27 +1422,19 @@
       }
     },
     {
+      "parameters": {
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst rows = $input.all().filter(r => r.json && r.json.id);\nconst invite = rows.length > 0 ? rows[0].json : null;\n\nconst bodyLower = (meta.bodyText || '').toLowerCase().trim();\n\n// Guard against false positives: an ordinary transfer/balance/policy/account-\n// opening email must NEVER be misread as an invitation response just because\n// it happens to contain a common word like \"yes\". A real invitation reply is\n// short and single-purpose, so we require either explicit phrasing, or a\n// short reply with no other strong banking intent present.\nconst looksLikeOtherIntent = /\\b(transfer|send money|remit|wire|balance|how much|policy|policies|\\bfees?\\b|\\blimits?\\b|overdraft|open an account|open account|new account|standing order|recurring|dispute|fraud|unauthorized|unauthorised)\\b/.test(bodyLower);\n\nconst explicitAccept = /\\bi accept\\b|\\baccept(?:s|ed|ing)? the invitation\\b|\\baccept this invitation\\b/.test(bodyLower);\nconst explicitDecline = /\\bi decline\\b|\\bdecline the invitation\\b|\\bdecline this invitation\\b|\\bi reject\\b/.test(bodyLower);\n\nconst wordCount = bodyLower.split(/\\s+/).filter(Boolean).length;\nconst isShortReply = wordCount > 0 && wordCount <= 8;\nconst shortAccept = isShortReply && /\\b(accept|agree|yes|confirm|ok|okay)\\b/.test(bodyLower);\nconst shortDecline = isShortReply && /\\b(decline|reject|no|refuse)\\b/.test(bodyLower);\n\nconst wantsAccept = explicitAccept || (shortAccept && !looksLikeOtherIntent);\nconst wantsDecline = explicitDecline || (shortDecline && !looksLikeOtherIntent);\n\nconst isResponse = !!invite && (wantsAccept || wantsDecline) && !(wantsAccept && wantsDecline);\n\nreturn [{\n  json: {\n    isResponse,\n    invitation_id: invite ? invite.id : null,\n    accept: wantsAccept && !wantsDecline,\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    rawFrom: meta.rawFrom,\n    messageId: meta.messageId,\n    threadId: meta.threadId\n  }\n}];"
+      },
       "id": "bb139be3-8498-4748-a4da-847cbd305acb",
       "name": "Detect Invitation Response Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         -944,
-        700
-      ],
-      "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst rows = $input.all().filter(r => r.json && r.json.id);\nconst invite = rows.length > 0 ? rows[0].json : null;\n\nconst bodyLower = (meta.bodyText || '').toLowerCase().trim();\n\n// Guard against false positives: an ordinary transfer/balance/policy/account-\n// opening email must NEVER be misread as an invitation response just because\n// it happens to contain a common word like \"yes\". A real invitation reply is\n// short and single-purpose, so we require either explicit phrasing, or a\n// short reply with no other strong banking intent present.\nconst looksLikeOtherIntent = /\\b(transfer|send money|remit|wire|balance|how much|policy|policies|\\bfees?\\b|\\blimits?\\b|overdraft|open an account|open account|new account|standing order|recurring|dispute|fraud|unauthorized|unauthorised)\\b/.test(bodyLower);\n\nconst explicitAccept = /\\bi accept\\b|\\baccept(?:s|ed|ing)? the invitation\\b|\\baccept this invitation\\b/.test(bodyLower);\nconst explicitDecline = /\\bi decline\\b|\\bdecline the invitation\\b|\\bdecline this invitation\\b|\\bi reject\\b/.test(bodyLower);\n\nconst wordCount = bodyLower.split(/\\s+/).filter(Boolean).length;\nconst isShortReply = wordCount > 0 && wordCount <= 8;\nconst shortAccept = isShortReply && /\\b(accept|agree|yes|confirm|ok|okay)\\b/.test(bodyLower);\nconst shortDecline = isShortReply && /\\b(decline|reject|no|refuse)\\b/.test(bodyLower);\n\nconst wantsAccept = explicitAccept || (shortAccept && !looksLikeOtherIntent);\nconst wantsDecline = explicitDecline || (shortDecline && !looksLikeOtherIntent);\n\nconst isResponse = !!invite && (wantsAccept || wantsDecline) && !(wantsAccept && wantsDecline);\n\nreturn [{\n  json: {\n    isResponse,\n    invitation_id: invite ? invite.id : null,\n    accept: wantsAccept && !wantsDecline,\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    rawFrom: meta.rawFrom,\n    messageId: meta.messageId,\n    threadId: meta.threadId\n  }\n}];"
-      }
+        704
+      ]
     },
     {
-      "id": "ec24cd34-fd45-4999-9a06-5cc5d835f8ce",
-      "name": "Is Invitation Response?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        -720,
-        700
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -1409,17 +1458,17 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "ec24cd34-fd45-4999-9a06-5cc5d835f8ce",
+      "name": "Is Invitation Response?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -720,
+        704
+      ]
     },
     {
-      "id": "6a10e6d8-5e51-4191-beb3-bb3ca7cb8545",
-      "name": "Respond To Joint Invitation",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -500,
-        620
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/respond_to_joint_invitation",
@@ -1445,6 +1494,14 @@
           }
         }
       },
+      "id": "6a10e6d8-5e51-4191-beb3-bb3ca7cb8545",
+      "name": "Respond To Joint Invitation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -496,
+        624
+      ],
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",
@@ -1453,14 +1510,6 @@
       }
     },
     {
-      "id": "86d7198b-adea-4a05-bcf1-03adf0baa2e7",
-      "name": "Needs Profile Creation?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        -280,
-        620
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -1484,17 +1533,17 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "86d7198b-adea-4a05-bcf1-03adf0baa2e7",
+      "name": "Needs Profile Creation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -288,
+        624
+      ]
     },
     {
-      "id": "161695db-6ab7-4fb6-ae7f-fab66774a5e8",
-      "name": "Create Auth User for Invitee",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -60,
-        520
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://qesrdltnvsdkjtaastkb.supabase.co/auth/v1/admin/users",
@@ -1520,6 +1569,14 @@
           }
         }
       },
+      "id": "161695db-6ab7-4fb6-ae7f-fab66774a5e8",
+      "name": "Create Auth User for Invitee",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -64,
+        528
+      ],
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",
@@ -1528,14 +1585,6 @@
       }
     },
     {
-      "id": "8db0591e-ee81-4a2b-be14-689330234706",
-      "name": "Invitee Auth User Created?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        160,
-        520
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -1559,17 +1608,17 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "8db0591e-ee81-4a2b-be14-689330234706",
+      "name": "Invitee Auth User Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        528
+      ]
     },
     {
-      "id": "87a616f4-c2fd-451c-bda3-d61e3c15eaab",
-      "name": "Respond To Joint Invitation (New Profile)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        380,
-        460
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/respond_to_joint_invitation",
@@ -1595,6 +1644,14 @@
           }
         }
       },
+      "id": "87a616f4-c2fd-451c-bda3-d61e3c15eaab",
+      "name": "Respond To Joint Invitation (New Profile)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        384,
+        464
+      ],
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",
@@ -1603,14 +1660,6 @@
       }
     },
     {
-      "id": "10cc4d37-5429-4035-871e-88bfb039ec08",
-      "name": "Send Invitee Account Creation Failed Email",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        160,
-        380
-      ],
       "parameters": {
         "sendTo": "={{ $('Detect Invitation Response Intent').item.json.fromEmail }}",
         "subject": "Joint Account Invitation - Could Not Process",
@@ -1620,6 +1669,14 @@
           "appendAttribution": false
         }
       },
+      "id": "10cc4d37-5429-4035-871e-88bfb039ec08",
+      "name": "Send Invitee Account Creation Failed Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        160,
+        384
+      ],
       "webhookId": "01568cc2-7315-48dc-9006-80ebf7fe9a4f",
       "credentials": {
         "gmailOAuth2": {
@@ -1629,27 +1686,19 @@
       }
     },
     {
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nconst invitee = $('Detect Invitation Response Intent').item.json;\n\nlet inviteeMsg, inviterMsg;\nconst status = res.status || (res.success ? 'accepted' : 'error');\n\nif (status === 'accepted') {\n  inviteeMsg = `Your joint account has been created.\\n\\nAccount Number: ${res.account_number}\\nCurrency: ${res.currency}\\nStarting Balance: Rs 0.00`;\n  inviterMsg = `Good news -- ${invitee.fromEmail} accepted your joint account invitation.\\n\\nAccount Number: ${res.account_number}\\nCurrency: ${res.currency}`;\n} else if (status === 'rejected') {\n  inviteeMsg = `You have declined the joint account invitation. No account was created.`;\n  inviterMsg = `${invitee.fromEmail} declined your joint account invitation. No account was created.`;\n} else if (status === 'expired') {\n  inviteeMsg = `This joint account invitation has expired (it was only valid for 5 minutes). Please ask the inviter to send a new one if you'd still like to proceed.`;\n  inviterMsg = `Your joint account invitation to ${invitee.fromEmail} expired because they did not respond within 5 minutes. You can send a new invitation any time.`;\n} else if (res.already_processed) {\n  inviteeMsg = `This invitation was already ${res.status} -- no further action was taken.`;\n  inviterMsg = null;\n} else {\n  inviteeMsg = `We could not process your response to this invitation. ${res.error || 'Please try again or contact support.'}`;\n  inviterMsg = null;\n}\n\nreturn [{ json: {\n  inviteeMsg,\n  inviterMsg,\n  inviteeEmail: invitee.fromEmail,\n  inviterEmail: res.inviter_email || null\n} }];"
+      },
       "id": "aba72bfb-89d6-46b5-9d70-52b7faba08b4",
       "name": "Format Joint Invitation Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        380,
-        700
-      ],
-      "parameters": {
-        "jsCode": "const res = $input.first().json;\nconst invitee = $('Detect Invitation Response Intent').item.json;\n\nlet inviteeMsg, inviterMsg;\nconst status = res.status || (res.success ? 'accepted' : 'error');\n\nif (status === 'accepted') {\n  inviteeMsg = `Your joint account has been created.\\n\\nAccount Number: ${res.account_number}\\nCurrency: ${res.currency}\\nStarting Balance: Rs 0.00`;\n  inviterMsg = `Good news -- ${invitee.fromEmail} accepted your joint account invitation.\\n\\nAccount Number: ${res.account_number}\\nCurrency: ${res.currency}`;\n} else if (status === 'rejected') {\n  inviteeMsg = `You have declined the joint account invitation. No account was created.`;\n  inviterMsg = `${invitee.fromEmail} declined your joint account invitation. No account was created.`;\n} else if (status === 'expired') {\n  inviteeMsg = `This joint account invitation has expired (it was only valid for 5 minutes). Please ask the inviter to send a new one if you'd still like to proceed.`;\n  inviterMsg = `Your joint account invitation to ${invitee.fromEmail} expired because they did not respond within 5 minutes. You can send a new invitation any time.`;\n} else if (res.already_processed) {\n  inviteeMsg = `This invitation was already ${res.status} -- no further action was taken.`;\n  inviterMsg = null;\n} else {\n  inviteeMsg = `We could not process your response to this invitation. ${res.error || 'Please try again or contact support.'}`;\n  inviterMsg = null;\n}\n\nreturn [{ json: {\n  inviteeMsg,\n  inviterMsg,\n  inviteeEmail: invitee.fromEmail,\n  inviterEmail: res.inviter_email || null\n} }];"
-      }
+        384,
+        704
+      ]
     },
     {
-      "id": "1df62e1a-673f-42fa-be3d-a161de002e24",
-      "name": "Send Joint Invitation Response to Invitee",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        600,
-        620
-      ],
       "parameters": {
         "sendTo": "={{ $json.inviteeEmail }}",
         "subject": "Joint Account Invitation - Update",
@@ -1659,6 +1708,14 @@
           "appendAttribution": false
         }
       },
+      "id": "1df62e1a-673f-42fa-be3d-a161de002e24",
+      "name": "Send Joint Invitation Response to Invitee",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        608,
+        624
+      ],
       "webhookId": "38cf6256-5298-410f-9e4b-9346e85449cb",
       "credentials": {
         "gmailOAuth2": {
@@ -1668,14 +1725,6 @@
       }
     },
     {
-      "id": "c278e3da-a625-4201-8ae5-717fd136cec8",
-      "name": "Send Joint Invitation Response to Inviter",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        600,
-        780
-      ],
       "parameters": {
         "sendTo": "={{ $json.inviterEmail }}",
         "subject": "Joint Account Invitation - Update",
@@ -1685,6 +1734,14 @@
           "appendAttribution": false
         }
       },
+      "id": "c278e3da-a625-4201-8ae5-717fd136cec8",
+      "name": "Send Joint Invitation Response to Inviter",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        608,
+        784
+      ],
       "webhookId": "7d2a3d63-80e5-4385-89ce-29deb6da5ad0",
       "credentials": {
         "gmailOAuth2": {
@@ -1694,14 +1751,6 @@
       }
     },
     {
-      "id": "92ef46fd-24e3-4a83-b98d-414c12a89ec5",
-      "name": "Should Notify Inviter?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        600,
-        900
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -1725,17 +1774,17 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "92ef46fd-24e3-4a83-b98d-414c12a89ec5",
+      "name": "Should Notify Inviter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        608,
+        912
+      ]
     },
     {
-      "id": "cbdd348a-d146-48c7-b8d3-02a4afb60fa7",
-      "name": "Execute WF-04 RAG Support Sub-Workflow (Public)",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.1,
-      "position": [
-        -280,
-        700
-      ],
       "parameters": {
         "workflowId": {
           "__rl": true,
@@ -1744,26 +1793,18 @@
           "cachedResultUrl": "/workflow/GLAY2Ob2nfxsFh7t",
           "cachedResultName": "WF-04 RAG Support"
         },
-        "options": {},
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "customer_email": "={{ $json.fromEmail }}",
-            "inquiry": "={{ $json.bodyText }}",
-            "subject": "={{ $json.subject }}"
-          }
-        }
-      }
+        "options": {}
+      },
+      "id": "cbdd348a-d146-48c7-b8d3-02a4afb60fa7",
+      "name": "Execute WF-04 RAG Support Sub-Workflow (Public)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        -288,
+        704
+      ]
     },
     {
-      "id": "6e47326d-3298-4242-ae7b-515a6603fe8c",
-      "name": "Send Public RAG Receipt Email",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        -60,
-        700
-      ],
       "parameters": {
         "sendTo": "={{ $('Extract New Sender Intent').item.json.fromEmail }}",
         "subject": "=RE: {{ $('Extract New Sender Intent').item.json.subject }}",
@@ -1773,6 +1814,14 @@
           "appendAttribution": false
         }
       },
+      "id": "6e47326d-3298-4242-ae7b-515a6603fe8c",
+      "name": "Send Public RAG Receipt Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -64,
+        704
+      ],
       "webhookId": "1af6fbe7-2f96-47ae-a439-b9ecde55ce02",
       "credentials": {
         "gmailOAuth2": {
@@ -1782,14 +1831,6 @@
       }
     },
     {
-      "id": "161837c4-31be-4132-b1c8-ae7a4ad36126",
-      "name": "Sweep Expired Joint Invitations",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -1600,
-        900
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/expire_stale_joint_invitations",
@@ -1815,6 +1856,14 @@
           }
         }
       },
+      "id": "161837c4-31be-4132-b1c8-ae7a4ad36126",
+      "name": "Sweep Expired Joint Invitations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1600,
+        912
+      ],
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",
@@ -1823,40 +1872,32 @@
       }
     },
     {
+      "parameters": {
+        "jsCode": "const body = $input.first().json;\nconst list = Array.isArray(body.expired) ? body.expired : [];\nreturn list.map(e => ({ json: e }));"
+      },
       "id": "621dfd96-5763-4abb-814d-e55f87ef4293",
       "name": "Extract Expired Invitations for Notice",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
         -1376,
-        900
-      ],
-      "parameters": {
-        "jsCode": "const body = $input.first().json;\nconst list = Array.isArray(body.expired) ? body.expired : [];\nreturn list.map(e => ({ json: e }));"
-      }
+        912
+      ]
     },
     {
+      "parameters": {
+        "options": {}
+      },
       "id": "7d6e52eb-d07f-4343-bcf9-a7078b68a32b",
       "name": "Process Each Expired Invitation",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
         -1168,
-        900
-      ],
-      "parameters": {
-        "batchSize": 1
-      }
+        912
+      ]
     },
     {
-      "id": "1d4772d8-9fd7-4497-ac75-6e4048047a38",
-      "name": "Email Inviter - Invitation Expired",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        -944,
-        828
-      ],
       "parameters": {
         "sendTo": "={{ $json.inviter_email }}",
         "subject": "Joint Account Invitation Expired",
@@ -1866,7 +1907,423 @@
           "appendAttribution": false
         }
       },
+      "id": "1d4772d8-9fd7-4497-ac75-6e4048047a38",
+      "name": "Email Inviter - Invitation Expired",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -944,
+        832
+      ],
       "webhookId": "a38031f4-e855-42c4-a7b9-94a4b6c00e51",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "e347b0ea-27b5-406e-8172-d992ef18ed09",
+      "name": "Already Auto-Answered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        96,
+        288
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "already-answered",
+              "leftValue": "={{ $json.threshold_exceeded }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "19e8e969-c2d8-468a-97e0-08770927cb21",
+      "name": "Already Auto-Answered? (Public)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -168,
+        700
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "already-answered-public",
+              "leftValue": "={{ $json.threshold_exceeded }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "916d1587-15f5-46f5-b25b-512c78eb461f",
+      "name": "Apply For Loan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -288,
+        900
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/apply_for_loan",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_profile_id\": \"{{ $json.profile_id }}\",\n  \"p_account_id\": \"{{ $json.loanDetails.account_id }}\",\n  \"p_amount\": {{ $json.loanDetails.amount }},\n  \"p_term_months\": {{ $json.loanDetails.term_months }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "ba687521-94cf-4ab6-bbf2-f8bbfbf8c2b5",
+      "name": "Loan RPC Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -96,
+        900
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "loan-rpc-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3c0f5b9b-1991-4cbb-8caf-7faa98f45832",
+      "name": "Loan Auto-Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        96,
+        850
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "loan-auto-approved",
+              "leftValue": "={{ $json.auto_approved }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0906dd1c-d76c-4fa0-a18e-4975016e7723",
+      "name": "Send Loan Approved Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        288,
+        780
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nYour loan application has been approved and the funds have been disbursed to your account.\n\nPrincipal: Rs {{ ($('Classify Intent & Authorize Request').item.json.loanDetails.amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.term_months }} months\nMonthly repayment: Rs {{ ($json.monthly_payment_amount / 100).toFixed(2) }} (collected automatically from this account each month)\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "1d557f20-3903-48a4-85f5-ee63e4812419",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "244c5c94-4b88-4a41-808b-248f29414966",
+      "name": "Send Loan Pending Review Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        288,
+        920
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nThank you for your loan application. Because of the amount requested, it requires a quick review by a specialist before funds can be disbursed. We'll follow up shortly.\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "f2cb06b8-6043-4efc-9ed9-8ef1fcdf339f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "b025ca15-266b-4474-a816-aceb45441feb",
+      "name": "Alert Ops - Loan Pending Review",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        496,
+        920
+      ],
+      "parameters": {
+        "sendTo": "ops-team@yourbank.example",
+        "subject": "=Loan Pending Review: {{ $json.loan_id }}",
+        "emailType": "text",
+        "message": "=A loan application requires manual review.\n\nApplicant: {{ $('Classify Intent & Authorize Request').item.json.full_name }} ({{ $('Classify Intent & Authorize Request').item.json.fromEmail }})\nLoan ID: {{ $json.loan_id }}\nPrincipal requested: Rs {{ ($json.principal_amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.term_months }} months\n\nTo approve or reject, POST to /webhook/approve-loan (WF-05):\n{ \"loan_id\": \"{{ $json.loan_id }}\", \"action\": \"approve\" }  (or \"reject\", with an optional \"reason\")\n\nDigital Bank Ops",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "fe837966-e4e5-4b88-ba4c-ce362b3d4258",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "a08c2b5b-b713-49e1-a514-6821075c82e4",
+      "name": "Send Loan Rejected Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        96,
+        1000
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nWe were unable to process your loan application.\n\nReason: {{ $json.error }}\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "1c14bf06-b30d-4f6f-b822-26a9ba29a057",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "f765db20-5566-4093-9651-b1310c4dac51",
+      "name": "Deposit Funds",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -288,
+        1120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/deposit_funds",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_account_id\": \"{{ $json.depositDetails.account_id }}\",\n  \"p_amount\": {{ $json.depositDetails.amount }},\n  \"p_initiated_by_profile_id\": \"{{ $json.profile_id }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "7c87a081-07ad-45dd-b76c-acc5d650d379",
+      "name": "Deposit Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -96,
+        1120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "deposit-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "67e0c85a-79f6-4968-b2c9-d43a69015a11",
+      "name": "Send Deposit Confirmation Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        96,
+        1080
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nYour deposit has been received and credited to your account.\n\nAmount deposited: Rs {{ ($json.amount / 100).toFixed(2) }}\nNew balance: Rs {{ ($json.new_balance / 100).toFixed(2) }}\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "e9408ab7-5437-4c72-9356-260f52499656",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "a66c9d17-cd90-4345-9b3d-03cc3b4c02f0",
+      "name": "Send Deposit Rejected Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        96,
+        1160
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nWe were unable to process your deposit.\n\nReason: {{ $json.error }}\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "74a24e95-e124-45c0-99e5-043c83462019",
       "credentials": {
         "gmailOAuth2": {
           "id": "IrWmPXzOkHIt9fdU",
@@ -2019,6 +2476,20 @@
         ],
         [
           {
+            "node": "Apply For Loan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Deposit Funds",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Send General Inquiry Response Email",
             "type": "main",
             "index": 0
@@ -2042,17 +2513,6 @@
         [
           {
             "node": "Send Transfer Response Email",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Execute WF-04 RAG Support Sub-Workflow": {
-      "main": [
-        [
-          {
-            "node": "Send RAG Support Receipt Email",
             "type": "main",
             "index": 0
           }
@@ -2425,17 +2885,6 @@
         ]
       ]
     },
-    "Execute WF-04 RAG Support Sub-Workflow (Public)": {
-      "main": [
-        [
-          {
-            "node": "Send Public RAG Receipt Email",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Sweep Expired Joint Invitations": {
       "main": [
         [
@@ -2480,6 +2929,139 @@
           }
         ]
       ]
+    },
+    "Execute WF-04 RAG Support Sub-Workflow": {
+      "main": [
+        [
+          {
+            "node": "Already Auto-Answered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Auto-Answered?": {
+      "main": [
+        null,
+        [
+          {
+            "node": "Send RAG Support Receipt Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute WF-04 RAG Support Sub-Workflow (Public)": {
+      "main": [
+        [
+          {
+            "node": "Already Auto-Answered? (Public)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Auto-Answered? (Public)": {
+      "main": [
+        null,
+        [
+          {
+            "node": "Send Public RAG Receipt Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply For Loan": {
+      "main": [
+        [
+          {
+            "node": "Loan RPC Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loan RPC Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Loan Auto-Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Loan Rejected Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loan Auto-Approved?": {
+      "main": [
+        [
+          {
+            "node": "Send Loan Approved Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Loan Pending Review Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Loan Pending Review Email": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops - Loan Pending Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deposit Funds": {
+      "main": [
+        [
+          {
+            "node": "Deposit Successful?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deposit Successful?": {
+      "main": [
+        [
+          {
+            "node": "Send Deposit Confirmation Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Deposit Rejected Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -2487,7 +3069,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "aeb49a0d-a626-4841-b74f-2ad8bb9338e3",
+  "versionId": "44a97a4a-31b2-495a-a1e0-e079792dad82",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

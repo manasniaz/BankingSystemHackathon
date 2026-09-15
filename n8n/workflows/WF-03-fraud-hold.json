@@ -175,7 +175,7 @@
     },
     {
       "parameters": {
-        "sendTo": "metonystar1@gmail.com",
+        "sendTo": "ops-team@yourbank.example",
         "subject": "FRAUD ALERT: Account Hold Placed - Requires Human Review",
         "emailType": "text",
         "message": "={{ \"FRAUD HOLD ALERT\\n\\nAccount ID: \" + $('Validate Request Payload').item.json.params.account_id + \"\\nAmount: \" + $('Validate Request Payload').item.json.params.amount + \" cents\\nRisk Score: \" + $('Validate & Evaluate Fraud Decision').item.json.risk_score + \"\\nDecision: \" + $('Validate & Evaluate Fraud Decision').item.json.decision + \"\\nReason: \" + $('Validate & Evaluate Fraud Decision').item.json.reason + \"\\n\\nAction Required: Human operator review via release_account_hold RPC.\" }}",

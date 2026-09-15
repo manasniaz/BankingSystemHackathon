@@ -11,9 +11,10 @@ What this submission includes, what it deliberately leaves out, and why. This is
 - Deterministic Python fraud scoring (4 rules) gating every transfer, with automated full-account-freeze on high risk.
 - Standing orders: hourly execution, retry-with-max-3, permanent-failure alerting, stale-lock-safe against concurrent edits.
 - Nightly ledger reconciliation (debit=credit system-wide, cached balance vs. ledger sum per account).
-- RAG-drafted policy support answers with a mandatory human approval gate before anything reaches a customer, plus a grounded/confidence threshold that degrades to "needs human" instead of guessing.
+- RAG-drafted policy support answers: a grounded, confident (≥0.7) answer is sent straight to the customer; anything else degrades to a mandatory human approval gate (WF-05) instead of guessing. Human review is for what's actually ambiguous, not every request. See `decisions.md` Session 5 and `docs/policies.md`.
 - Gmail as the sole customer-facing channel, both inbound (intent classification from real emails) and outbound (every response path).
 - 15-table Postgres ledger of truth, `SECURITY DEFINER` RPCs as the only financial mutation path, RLS on every table.
+- **Money-in**: a real funding source (`TREASURY-MAIN`, funded from a `BANK-CAPITAL` account, both ledger-backed) instead of every account being permanently stuck at Rs 0.00. Self-service deposits (capped, rate-limited) and loans (flat 10% interest, auto-approved ≤ Rs 200,000, human-reviewed up to Rs 2,000,000) via `apply_for_loan`/`approve_loan`/`reject_loan`/`deposit_funds`. See `decisions.md` Session 7.
 
 ## Explicitly out of scope for this submission
 

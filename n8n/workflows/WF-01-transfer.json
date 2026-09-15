@@ -235,7 +235,7 @@
     },
     {
       "parameters": {
-        "sendTo": "metonystar1@gmail.com",
+        "sendTo": "ops-team@yourbank.example",
         "subject": "={{ \"Transfer Failure Alert: \" + ($json.error || \"Unknown error\") }}",
         "emailType": "text",
         "message": "={{ \"TRANSFER FAILURE ALERT\\n\\nError: \" + ($json.error || \"Unknown\") + \"\\nIdempotency Key: \" + ($json.idempotency_key || \"N/A\") + \"\\n\\nNo funds were moved. The transaction was fully rolled back by PostgreSQL.\" }}",
