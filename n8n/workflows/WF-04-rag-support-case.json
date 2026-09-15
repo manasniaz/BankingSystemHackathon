@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Public RAG access: profile_id is optional. Anyone can ask a policy question;\n// a bank customer is simply recognized (profile_id set), everyone else is\n// tracked by their verified sender email only (customer_email).\nconst profileId = body.profile_id && uuidRegex.test(String(body.profile_id).trim()) ? String(body.profile_id).trim() : null;\nconst customerEmail = String(body.customer_email || '').trim().toLowerCase();\n\nif (!profileId && !customerEmail) {\n  throw new Error('Either profile_id or customer_email is required to identify the inquirer');\n}\n\nconst inquiry = String(body.inquiry || body.bodyText || '').trim();\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: profileId,\n      customer_email: customerEmail,\n      inquirer_type: profileId ? 'customer' : 'public',\n      subject: String(body.subject || 'General Banking Inquiry').trim(),\n      inquiry: inquiry\n    }\n  }\n}];"
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Public RAG access: profile_id is optional. Anyone can ask a policy question;\n// a bank customer is simply recognized (profile_id set), everyone else is\n// tracked by their verified sender email only (customer_email).\nconst profileId = body.profile_id && uuidRegex.test(String(body.profile_id).trim()) ? String(body.profile_id).trim() : null;\nconst customerEmail = String(body.customer_email || '').trim().toLowerCase();\n\nif (!profileId && !customerEmail) {\n  throw new Error('Either profile_id or customer_email is required to identify the inquirer');\n}\n\nconst subject = String(body.subject || '').trim();\n// Defensive fallback: if the body/inquiry text is empty (e.g. an email with\n// everything crammed into the subject line), fall back to the subject rather\n// than hard-failing the whole sub-workflow with no reply to the customer.\nconst inquiry = String(body.inquiry || body.bodyText || '').trim() || subject;\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: profileId,\n      customer_email: customerEmail,\n      inquirer_type: profileId ? 'customer' : 'public',\n      subject: subject || 'General Banking Inquiry',\n      inquiry: inquiry\n    }\n  }\n}];"
       },
       "id": "71f8510f-be32-4a0d-b4ae-428735e405c3",
       "name": "Validate Support Request Payload",
@@ -738,7 +738,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "8fabfced-eae8-47a1-ac2f-95baf0937186",
+  "versionId": "d4826841-b532-40e4-a306-9fd1c3e839ce",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

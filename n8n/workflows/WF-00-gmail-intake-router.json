@@ -150,7 +150,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\nconst text = rawText.toLowerCase();\n\nlet intent = 'UNKNOWN';\nlet transferDetails = null;\nlet jointInviteeEmail = null;\n\nconst wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\nconst wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\nconst wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\nconst wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\nconst wantsDispute = /\\b(dispute|fraud|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize)\\b/.test(text);\nconst wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\nconst wantsJointOpen = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add)\\b/.test(text);\n\nif (wantsJointOpen) {\n  intent = 'JOINT_OPEN';\n  const emailMatch = meta.bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (wantsOpen) {\n  intent = 'OPEN_ACCOUNT';\n} else if (wantsDispute) {\n  intent = 'DISPUTE';\n} else if (wantsStanding) {\n  intent = 'STANDING_ORDER';\n} else if (wantsTransfer) {\n  intent = 'TRANSFER';\n\n  let amountMinor = 0;\n  const amtMatch = rawText.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      amountMinor = Math.round(major * 100);\n    }\n  }\n\n  let destAccount = null;\n  const acctMatch = meta.bodyText.match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = meta.bodyText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  const primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (wantsBalance) {\n  intent = 'BALANCE';\n} else if (wantsPolicy) {\n  intent = 'POLICY_RAG';\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail\n  }\n}];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add)\\b/.test(text);\n  const wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize)\\b/.test(text);\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = meta.bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  let amountMinor = 0;\n  const amtMatch = rawText.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      amountMinor = Math.round(major * 100);\n    }\n  }\n\n  let destAccount = null;\n  const acctMatch = meta.bodyText.match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = meta.bodyText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  const primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail\n  }\n}];"
       },
       "id": "384b42dd-9313-4a0f-b573-d225d837e452",
       "name": "Classify Intent & Authorize Request",
@@ -925,7 +925,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\nconst text = rawText.toLowerCase();\nconst wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\nconst wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = meta.bodyText.match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(text)) accountType = 'savings';\n\nreturn [{ json: { wantsOpen, wantsPolicy, fullName, accountType, fromEmail: meta.fromEmail, subject: meta.subject, bodyText: meta.bodyText } }];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\n\n// Body is the primary signal; subject is only a fallback when the body gives\n// no usable signal at all (see Classify Intent & Authorize Request for the\n// same rule applied to registered customers).\nfunction detect(text) {\n  const wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n  return { wantsOpen, wantsPolicy };\n}\n\nlet result = detect(bodyLower);\nif (!result.wantsOpen && !result.wantsPolicy) {\n  result = detect(subjectLower);\n}\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = meta.bodyText.match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(bodyLower + ' ' + subjectLower)) accountType = 'savings';\n\nreturn [{ json: { wantsOpen: result.wantsOpen, wantsPolicy: result.wantsPolicy, fullName, accountType, fromEmail: meta.fromEmail, subject: meta.subject, bodyText: meta.bodyText } }];"
       },
       "id": "8d42132d-de78-4e3b-a0bb-adbff9e39a9f",
       "name": "Extract New Sender Intent",
@@ -1373,7 +1373,7 @@
         700
       ],
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst rows = $input.all().filter(r => r.json && r.json.id);\nconst invite = rows.length > 0 ? rows[0].json : null;\nconst text = ((meta.subject || '') + ' ' + (meta.bodyText || '')).toLowerCase();\nconst wantsAccept = /\\b(accept|agree|yes please|i confirm|confirm)\\b|\\byes\\b/.test(text);\nconst wantsDecline = /\\b(decline|reject|no thanks|refuse|do not want|don't want)\\b/.test(text);\nconst isResponse = !!invite && (wantsAccept || wantsDecline) && !(wantsAccept && wantsDecline);\n\nreturn [{\n  json: {\n    isResponse,\n    invitation_id: invite ? invite.id : null,\n    accept: wantsAccept && !wantsDecline,\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    rawFrom: meta.rawFrom,\n    messageId: meta.messageId,\n    threadId: meta.threadId\n  }\n}];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst rows = $input.all().filter(r => r.json && r.json.id);\nconst invite = rows.length > 0 ? rows[0].json : null;\n\nconst bodyLower = (meta.bodyText || '').toLowerCase().trim();\n\n// Guard against false positives: an ordinary transfer/balance/policy/account-\n// opening email must NEVER be misread as an invitation response just because\n// it happens to contain a common word like \"yes\". A real invitation reply is\n// short and single-purpose, so we require either explicit phrasing, or a\n// short reply with no other strong banking intent present.\nconst looksLikeOtherIntent = /\\b(transfer|send money|remit|wire|balance|how much|policy|policies|\\bfees?\\b|\\blimits?\\b|overdraft|open an account|open account|new account|standing order|recurring|dispute|fraud|unauthorized|unauthorised)\\b/.test(bodyLower);\n\nconst explicitAccept = /\\bi accept\\b|\\baccept(?:s|ed|ing)? the invitation\\b|\\baccept this invitation\\b/.test(bodyLower);\nconst explicitDecline = /\\bi decline\\b|\\bdecline the invitation\\b|\\bdecline this invitation\\b|\\bi reject\\b/.test(bodyLower);\n\nconst wordCount = bodyLower.split(/\\s+/).filter(Boolean).length;\nconst isShortReply = wordCount > 0 && wordCount <= 8;\nconst shortAccept = isShortReply && /\\b(accept|agree|yes|confirm|ok|okay)\\b/.test(bodyLower);\nconst shortDecline = isShortReply && /\\b(decline|reject|no|refuse)\\b/.test(bodyLower);\n\nconst wantsAccept = explicitAccept || (shortAccept && !looksLikeOtherIntent);\nconst wantsDecline = explicitDecline || (shortDecline && !looksLikeOtherIntent);\n\nconst isResponse = !!invite && (wantsAccept || wantsDecline) && !(wantsAccept && wantsDecline);\n\nreturn [{\n  json: {\n    isResponse,\n    invitation_id: invite ? invite.id : null,\n    accept: wantsAccept && !wantsDecline,\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    rawFrom: meta.rawFrom,\n    messageId: meta.messageId,\n    threadId: meta.threadId\n  }\n}];"
       }
     },
     {
@@ -1725,6 +1725,60 @@
         },
         "options": {}
       }
+    },
+    {
+      "id": "cbdd348a-d146-48c7-b8d3-02a4afb60fa7",
+      "name": "Execute WF-04 RAG Support Sub-Workflow (Public)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        -280,
+        700
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "GLAY2Ob2nfxsFh7t",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/GLAY2Ob2nfxsFh7t",
+          "cachedResultName": "WF-04 RAG Support"
+        },
+        "options": {},
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "customer_email": "={{ $json.fromEmail }}",
+            "inquiry": "={{ $json.bodyText }}",
+            "subject": "={{ $json.subject }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "6e47326d-3298-4242-ae7b-515a6603fe8c",
+      "name": "Send Public RAG Receipt Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        -60,
+        700
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Extract New Sender Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Extract New Sender Intent').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello,\n\nThank you for your question. We have received it and our support assistant has reviewed it against our official policy documents.\n\nReference: {{ $json.support_case_id }}\n\nA specialist verifies every answer before it's sent, so we don't send automated policy answers without human review. You'll receive a follow-up email shortly with the verified answer.\n\nNote: you don't need a Digital Bank account to ask us policy questions -- if you'd also like to open an account, just reply and say so.\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "1af6fbe7-2f96-47ae-a439-b9ecde55ce02",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -2035,7 +2089,13 @@
             "index": 0
           }
         ],
-        null,
+        [
+          {
+            "node": "Execute WF-04 RAG Support Sub-Workflow (Public)",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Send Unregistered Email Response",
@@ -2265,6 +2325,17 @@
           }
         ]
       ]
+    },
+    "Execute WF-04 RAG Support Sub-Workflow (Public)": {
+      "main": [
+        [
+          {
+            "node": "Send Public RAG Receipt Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -2272,7 +2343,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "37c64180-f518-43a1-a813-ba5ddfc118c0",
+  "versionId": "269c4a72-bbc3-4c4a-9cfb-528c8d88da38",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
