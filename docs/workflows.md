@@ -38,3 +38,10 @@ Full root-cause writeups: `decisions.md` → "Session 5".
 - **WF-05**: `Fetch Loan & Profile Info`'s Supabase query initially failed with a PostgREST 300 ambiguity error (`loans` has two foreign keys to `profiles`) — fixed by qualifying the embed to `profiles!loans_profile_id_fkey(*)`.
 
 Full root-cause writeups: `decisions.md` → "Session 7".
+
+## Session 8 fixes (2026-09-15)
+
+- **WF-00**: keyword-only intent classification was too brittle ("Create a account" fell through to the generic fallback). Widened the keyword lists and added a Groq-based fallback classifier for both the existing-customer and new-sender paths, used only when the keywords genuinely can't decide. Verified against 8+ phrasings via a throwaway test harness before wiring in — the obvious model+structured-parser combo silently failed on short inputs; fixed by switching to plain-text output.
+- **WF-00**: reorganized all 82 nodes into a clean layered layout (programmatic, by hop-distance from the trigger) — the canvas had accumulated overlapping nodes from many incremental sessions. No logic or connections changed; re-verified with the connection-completeness audit.
+
+Full root-cause writeup, including two wiring bugs caught before publishing: `decisions.md` → "Session 8".

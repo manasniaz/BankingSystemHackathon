@@ -19,8 +19,8 @@
       "type": "n8n-nodes-base.gmailTrigger",
       "typeVersion": 1.4,
       "position": [
-        -1600,
-        368
+        0,
+        0
       ],
       "credentials": {
         "gmailOAuth2": {
@@ -38,8 +38,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1376,
-        368
+        280,
+        0
       ]
     },
     {
@@ -55,8 +55,8 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -1168,
-        368
+        1400,
+        0
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -96,8 +96,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -944,
-        368
+        1680,
+        0
       ]
     },
     {
@@ -115,8 +115,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        -944,
-        592
+        2800,
+        420
       ],
       "webhookId": "ba3273c5-e039-471d-a2e0-28d46b1f7217",
       "credentials": {
@@ -138,8 +138,8 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -720,
-        272
+        1960,
+        140
       ],
       "credentials": {
         "supabaseApi": {
@@ -150,15 +150,15 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add)\\b/.test(text);\n  const wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nfunction extractAmountMinor(text) {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  const amtMatch = text.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = meta.bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let destAccount = null;\n  const acctMatch = meta.bodyText.match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = meta.bodyText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let termMonths = 12;\n  const termMatch = rawText.match(/(\\d+)\\s*(month|months|year|years)/i);\n  if (termMatch) {\n    const n = parseInt(termMatch[1], 10);\n    termMonths = /year/i.test(termMatch[2]) ? n * 12 : n;\n  }\n\n  loanDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor,\n    term_months: termMonths\n  };\n} else if (intent === 'DEPOSIT') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  depositDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add|make)\\b/.test(text);\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud(ulent)?|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize|without (my )?permission|used my card)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nfunction extractAmountMinor(text) {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  const amtMatch = text.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = meta.bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let destAccount = null;\n  const acctMatch = meta.bodyText.match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = meta.bodyText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let termMonths = 12;\n  const termMatch = rawText.match(/(\\d+)\\s*(month|months|year|years)/i);\n  if (termMatch) {\n    const n = parseInt(termMatch[1], 10);\n    termMonths = /year/i.test(termMatch[2]) ? n * 12 : n;\n  }\n\n  loanDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor,\n    term_months: termMonths\n  };\n} else if (intent === 'DEPOSIT') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  depositDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
       },
       "id": "384b42dd-9313-4a0f-b573-d225d837e452",
       "name": "Classify Intent & Authorize Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -496,
-        272
+        2240,
+        140
       ]
     },
     {
@@ -186,8 +186,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Balance",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Balance"
             },
             {
               "conditions": {
@@ -205,12 +205,13 @@
                 ],
                 "options": {
                   "caseSensitive": true,
+                  "leftValue": "",
                   "typeValidation": "strict",
                   "version": 2
                 }
               },
-              "outputKey": "Transfer",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Transfer"
             },
             {
               "conditions": {
@@ -233,8 +234,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Policy RAG",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Policy RAG"
             },
             {
               "conditions": {
@@ -257,8 +258,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Standing Order",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Standing Order"
             },
             {
               "conditions": {
@@ -281,8 +282,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Unauthorized Access",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Unauthorized Access"
             },
             {
               "conditions": {
@@ -305,8 +306,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Dispute",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Dispute"
             },
             {
               "conditions": {
@@ -329,8 +330,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Open Account",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Open Account"
             },
             {
               "conditions": {
@@ -353,8 +354,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Joint Open",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Joint Open"
             },
             {
               "conditions": {
@@ -377,8 +378,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Loan Application",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Loan Application"
             },
             {
               "conditions": {
@@ -401,8 +402,8 @@
                   "version": 2
                 }
               },
-              "outputKey": "Deposit",
-              "renameOutput": true
+              "renameOutput": true,
+              "outputKey": "Deposit"
             }
           ]
         },
@@ -416,8 +417,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        -288,
-        272
+        2800,
+        700
       ]
     },
     {
@@ -429,8 +430,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -16,
-        -112
+        3080,
+        840
       ]
     },
     {
@@ -448,8 +449,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        192,
-        -112
+        3360,
+        840
       ],
       "webhookId": "71f96fa4-870c-4253-9552-ea9fb6900dff",
       "credentials": {
@@ -475,8 +476,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
       "position": [
-        1136,
-        48
+        4760,
+        0
       ]
     },
     {
@@ -494,8 +495,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        1376,
-        48
+        5040,
+        0
       ],
       "webhookId": "0f0bdb9d-5344-4d98-a13b-23931257b649",
       "credentials": {
@@ -514,32 +515,23 @@
           "cachedResultUrl": "/workflow/GLAY2Ob2nfxsFh7t",
           "cachedResultName": "WF-04 RAG Support"
         },
-        "options": {},
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "profile_id": "={{ $json.profile_id }}",
-            "customer_email": "={{ $json.fromEmail }}",
-            "subject": "={{ $json.subject }}",
-            "inquiry": "={{ $json.bodyText }}"
-          }
-        }
+        "options": {}
       },
       "id": "89aad436-478e-495c-ab15-32c9cb21d496",
       "name": "Execute WF-04 RAG Support Sub-Workflow",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
       "position": [
-        -16,
-        288
+        3080,
+        700
       ]
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
+        "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
         "emailType": "text",
-        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nWe have received your policy inquiry.\n\nReference: {{ $json.support_case_id }}\n\nOur support assistant has reviewed your question against our official policy documents. A specialist will verify the answer and send you a full response shortly.\n\nWe do not send automated policy answers without human verification, so that you always receive accurate information.\n\nDigital Bank Customer Support",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nWe have received your policy inquiry.\n\nReference: {{ $json.support_case_id }}\n\nOur support assistant has reviewed your question against our official policy documents. A specialist will verify the answer and send you a full response shortly.\n\nWe do not send automated policy answers without human verification, so that you always receive accurate information.\n\nDigital Bank Customer Support",
         "options": {
           "appendAttribution": false
         }
@@ -549,8 +541,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        192,
-        288
+        3640,
+        700
       ],
       "webhookId": "c2950656-6d05-4cfc-80d0-c5cf4b56f949",
       "credentials": {
@@ -575,8 +567,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        -16,
-        480
+        3080,
+        1680
       ],
       "webhookId": "d1d8f946-f944-441d-a5b9-35f53acbfc18",
       "credentials": {
@@ -601,8 +593,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        432,
-        464
+        3080,
+        1540
       ],
       "webhookId": "becdc342-a3cc-4dcf-8309-17f9543556be",
       "credentials": {
@@ -621,8 +613,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -16,
-        96
+        3080,
+        1260
       ]
     },
     {
@@ -655,8 +647,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        192,
-        96
+        3360,
+        1260
       ]
     },
     {
@@ -674,8 +666,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        496,
-        -112
+        3640,
+        1400
       ],
       "webhookId": "ef18aa39-e9be-4906-9ae1-dbd989296c63",
       "credentials": {
@@ -698,8 +690,8 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        432,
-        80
+        3640,
+        1260
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -739,8 +731,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        608,
-        80
+        3920,
+        560
       ]
     },
     {
@@ -758,8 +750,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        768,
-        -144
+        4200,
+        280
       ],
       "webhookId": "69882267-c3d7-4ab8-909c-cf44b31548c0",
       "credentials": {
@@ -799,8 +791,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        768,
-        64
+        4200,
+        140
       ],
       "alwaysOutputData": true
     },
@@ -844,8 +836,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        912,
-        48
+        4480,
+        0
       ]
     },
     {
@@ -863,8 +855,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        1136,
-        -128
+        4760,
+        140
       ],
       "webhookId": "8270b018-1ce8-4696-9a28-a366801c0bb2",
       "credentials": {
@@ -889,8 +881,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        -16,
-        688
+        3080,
+        1400
       ],
       "webhookId": "ebde257c-c3fa-4ef8-8ded-8efb7956cefd",
       "credentials": {
@@ -909,8 +901,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        288,
-        704
+        3080,
+        980
       ]
     },
     {
@@ -944,8 +936,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        480,
-        704
+        3360,
+        980
       ],
       "credentials": {
         "supabaseApi": {
@@ -969,8 +961,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        704,
-        704
+        3640,
+        840
       ],
       "webhookId": "458288ad-b760-4fb6-9671-f36d781b5d8a",
       "credentials": {
@@ -982,15 +974,15 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\n\n// Body is the primary signal; subject is only a fallback when the body gives\n// no usable signal at all (see Classify Intent & Authorize Request for the\n// same rule applied to registered customers).\nfunction detect(text) {\n  const wantsOpen = /\\b(open an account|open account|new account|sign up|become a customer)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n  return { wantsOpen, wantsPolicy };\n}\n\nlet result = detect(bodyLower);\nif (!result.wantsOpen && !result.wantsPolicy) {\n  result = detect(subjectLower);\n}\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = meta.bodyText.match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(bodyLower + ' ' + subjectLower)) accountType = 'savings';\n\nreturn [{ json: { wantsOpen: result.wantsOpen, wantsPolicy: result.wantsPolicy, fullName, accountType, fromEmail: meta.fromEmail, subject: meta.subject, bodyText: meta.bodyText } }];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\n\nfunction detect(text) {\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n  return { wantsOpen, wantsPolicy };\n}\n\nlet result = detect(bodyLower);\nif (!result.wantsOpen && !result.wantsPolicy) {\n  result = detect(subjectLower);\n}\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = meta.bodyText.match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(bodyLower + ' ' + subjectLower)) accountType = 'savings';\n\nreturn [{ json: { wantsOpen: result.wantsOpen, wantsPolicy: result.wantsPolicy, fullName, accountType, fromEmail: meta.fromEmail, subject: meta.subject, bodyText: meta.bodyText } }];"
       },
       "id": "8d42132d-de78-4e3b-a0bb-adbff9e39a9f",
       "name": "Extract New Sender Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -720,
-        592
+        1960,
+        0
       ]
     },
     {
@@ -1059,8 +1051,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        -496,
-        592
+        2520,
+        140
       ]
     },
     {
@@ -1094,8 +1086,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -288,
-        640
+        2800,
+        140
       ],
       "credentials": {
         "supabaseApi": {
@@ -1134,8 +1126,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -256,
-        880
+        3080,
+        0
       ]
     },
     {
@@ -1169,8 +1161,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -32,
-        896
+        3360,
+        0
       ],
       "credentials": {
         "supabaseApi": {
@@ -1181,10 +1173,10 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Extract New Sender Intent').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Extract New Sender Intent').item.json.subject }}",
+        "sendTo": "={{ $('New Sender Route').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('New Sender Route').item.json.subject }}",
         "emailType": "text",
-        "message": "=Hello {{ $('Extract New Sender Intent').item.json.fullName }},\n\nWelcome to Digital Bank! Your new {{ $json.account_type }} account has been opened.\n\nAccount Number: {{ $json.account_number }}\nCurrency: {{ $json.currency }}\nStarting Balance: Rs 0.00\n\nYou can now email us at this address for balance checks, transfers, and policy questions.\n\nDigital Bank New Accounts Team",
+        "message": "=Hello {{ $('New Sender Route').item.json.fullName }},\n\nWelcome to Digital Bank! Your new {{ $json.account_type }} account has been opened.\n\nAccount Number: {{ $json.account_number }}\nCurrency: {{ $json.currency }}\nStarting Balance: Rs 0.00\n\nYou can now email us at this address for balance checks, transfers, and policy questions.\n\nDigital Bank New Accounts Team",
         "options": {
           "appendAttribution": false
         }
@@ -1194,8 +1186,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        176,
-        896
+        3640,
+        0
       ],
       "webhookId": "2bda80f8-f2ab-4152-9406-55fbd599dca7",
       "credentials": {
@@ -1207,8 +1199,8 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Extract New Sender Intent').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Extract New Sender Intent').item.json.subject }} - Account Opening Request",
+        "sendTo": "={{ $('New Sender Route').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('New Sender Route').item.json.subject }} - Account Opening Request",
         "emailType": "text",
         "message": "=Hello,\n\nThank you for your interest in opening an account with Digital Bank. We could not complete this automatically -- this can happen if the email address is already associated with an account, or due to a temporary system issue.\n\nPlease try again in a few minutes, or contact a representative for assistance.\n\nDigital Bank New Accounts Team",
         "options": {
@@ -1220,8 +1212,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        -32,
-        1120
+        3360,
+        140
       ],
       "webhookId": "c099cade-2b92-48ae-8405-111ca40599d2",
       "credentials": {
@@ -1240,8 +1232,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        0,
-        1200
+        3080,
+        1120
       ]
     },
     {
@@ -1274,8 +1266,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        224,
-        1200
+        3360,
+        1120
       ]
     },
     {
@@ -1293,8 +1285,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        448,
-        1328
+        3640,
+        1120
       ],
       "webhookId": "228526c1-642c-43b1-a56d-24f69abbe78f",
       "credentials": {
@@ -1335,8 +1327,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        448,
-        1120
+        3640,
+        980
       ],
       "credentials": {
         "supabaseApi": {
@@ -1360,8 +1352,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        672,
-        1040
+        3920,
+        420
       ],
       "webhookId": "bbe92d36-e3a4-459f-b8d2-9045fdce3c56",
       "credentials": {
@@ -1386,8 +1378,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        672,
-        1200
+        3920,
+        280
       ],
       "webhookId": "207edd5e-5c3a-46ae-9ff5-085dac20728c",
       "credentials": {
@@ -1410,8 +1402,8 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        -1376,
-        704
+        560,
+        0
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -1430,8 +1422,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -944,
-        704
+        840,
+        0
       ]
     },
     {
@@ -1464,8 +1456,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -720,
-        704
+        1120,
+        0
       ]
     },
     {
@@ -1499,8 +1491,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -496,
-        624
+        1400,
+        140
       ],
       "credentials": {
         "supabaseApi": {
@@ -1539,8 +1531,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -288,
-        624
+        1680,
+        140
       ]
     },
     {
@@ -1574,8 +1566,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -64,
-        528
+        1960,
+        280
       ],
       "credentials": {
         "supabaseApi": {
@@ -1614,8 +1606,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        160,
-        528
+        2240,
+        280
       ]
     },
     {
@@ -1649,8 +1641,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        384,
-        464
+        2520,
+        420
       ],
       "credentials": {
         "supabaseApi": {
@@ -1674,8 +1666,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        160,
-        384
+        2520,
+        560
       ],
       "webhookId": "01568cc2-7315-48dc-9006-80ebf7fe9a4f",
       "credentials": {
@@ -1694,8 +1686,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        384,
-        704
+        1960,
+        420
       ]
     },
     {
@@ -1713,8 +1705,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        608,
-        624
+        2240,
+        420
       ],
       "webhookId": "38cf6256-5298-410f-9e4b-9346e85449cb",
       "credentials": {
@@ -1739,8 +1731,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        608,
-        784
+        2520,
+        700
       ],
       "webhookId": "7d2a3d63-80e5-4385-89ce-29deb6da5ad0",
       "credentials": {
@@ -1780,8 +1772,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        608,
-        912
+        2240,
+        560
       ]
     },
     {
@@ -1800,14 +1792,14 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
       "position": [
-        -288,
-        704
+        2800,
+        280
       ]
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Extract New Sender Intent').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Extract New Sender Intent').item.json.subject }}",
+        "sendTo": "={{ $('New Sender Route').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('New Sender Route').item.json.subject }}",
         "emailType": "text",
         "message": "=Hello,\n\nThank you for your question. We have received it and our support assistant has reviewed it against our official policy documents.\n\nReference: {{ $json.support_case_id }}\n\nA specialist verifies every answer before it's sent, so we don't send automated policy answers without human review. You'll receive a follow-up email shortly with the verified answer.\n\nNote: you don't need a Digital Bank account to ask us policy questions -- if you'd also like to open an account, just reply and say so.\n\nDigital Bank Customer Support",
         "options": {
@@ -1819,8 +1811,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        -64,
-        704
+        3360,
+        280
       ],
       "webhookId": "1af6fbe7-2f96-47ae-a439-b9ecde55ce02",
       "credentials": {
@@ -1861,8 +1853,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        -1600,
-        912
+        280,
+        140
       ],
       "credentials": {
         "supabaseApi": {
@@ -1880,8 +1872,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1376,
-        912
+        560,
+        140
       ]
     },
     {
@@ -1893,8 +1885,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        -1168,
-        912
+        840,
+        140
       ]
     },
     {
@@ -1912,8 +1904,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        -944,
-        832
+        1120,
+        140
       ],
       "webhookId": "a38031f4-e855-42c4-a7b9-94a4b6c00e51",
       "credentials": {
@@ -1924,14 +1916,6 @@
       }
     },
     {
-      "id": "e347b0ea-27b5-406e-8172-d992ef18ed09",
-      "name": "Already Auto-Answered?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        96,
-        288
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -1955,17 +1939,17 @@
           ]
         },
         "options": {}
-      }
-    },
-    {
-      "id": "19e8e969-c2d8-468a-97e0-08770927cb21",
-      "name": "Already Auto-Answered? (Public)",
+      },
+      "id": "e347b0ea-27b5-406e-8172-d992ef18ed09",
+      "name": "Already Auto-Answered?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -168,
+        3360,
         700
-      ],
+      ]
+    },
+    {
       "parameters": {
         "conditions": {
           "options": {
@@ -1989,17 +1973,17 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "19e8e969-c2d8-468a-97e0-08770927cb21",
+      "name": "Already Auto-Answered? (Public)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3080,
+        140
+      ]
     },
     {
-      "id": "916d1587-15f5-46f5-b25b-512c78eb461f",
-      "name": "Apply For Loan",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -288,
-        900
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/apply_for_loan",
@@ -2025,6 +2009,14 @@
           }
         }
       },
+      "id": "916d1587-15f5-46f5-b25b-512c78eb461f",
+      "name": "Apply For Loan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        420
+      ],
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",
@@ -2033,14 +2025,6 @@
       }
     },
     {
-      "id": "ba687521-94cf-4ab6-bbf2-f8bbfbf8c2b5",
-      "name": "Loan RPC Succeeded?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        -96,
-        900
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -2064,17 +2048,17 @@
           ]
         },
         "options": {}
-      }
-    },
-    {
-      "id": "3c0f5b9b-1991-4cbb-8caf-7faa98f45832",
-      "name": "Loan Auto-Approved?",
+      },
+      "id": "ba687521-94cf-4ab6-bbf2-f8bbfbf8c2b5",
+      "name": "Loan RPC Succeeded?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        96,
-        850
-      ],
+        3360,
+        420
+      ]
+    },
+    {
       "parameters": {
         "conditions": {
           "options": {
@@ -2098,26 +2082,34 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "3c0f5b9b-1991-4cbb-8caf-7faa98f45832",
+      "name": "Loan Auto-Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3640,
+        140
+      ]
     },
     {
+      "parameters": {
+        "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nYour loan application has been approved and the funds have been disbursed to your account.\n\nPrincipal: Rs {{ ($('Route by Intent').item.json.loanDetails.amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.term_months }} months\nMonthly repayment: Rs {{ ($json.monthly_payment_amount / 100).toFixed(2) }} (collected automatically from this account each month)\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
       "id": "0906dd1c-d76c-4fa0-a18e-4975016e7723",
       "name": "Send Loan Approved Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        288,
-        780
+        3920,
+        0
       ],
-      "parameters": {
-        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
-        "emailType": "text",
-        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nYour loan application has been approved and the funds have been disbursed to your account.\n\nPrincipal: Rs {{ ($('Classify Intent & Authorize Request').item.json.loanDetails.amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.term_months }} months\nMonthly repayment: Rs {{ ($json.monthly_payment_amount / 100).toFixed(2) }} (collected automatically from this account each month)\n\nDigital Bank Lending Team",
-        "options": {
-          "appendAttribution": false
-        }
-      },
       "webhookId": "1d557f20-3903-48a4-85f5-ee63e4812419",
       "credentials": {
         "gmailOAuth2": {
@@ -2127,23 +2119,23 @@
       }
     },
     {
+      "parameters": {
+        "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nThank you for your loan application. Because of the amount requested, it requires a quick review by a specialist before funds can be disbursed. We'll follow up shortly.\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
       "id": "244c5c94-4b88-4a41-808b-248f29414966",
       "name": "Send Loan Pending Review Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        288,
-        920
+        3920,
+        140
       ],
-      "parameters": {
-        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
-        "emailType": "text",
-        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nThank you for your loan application. Because of the amount requested, it requires a quick review by a specialist before funds can be disbursed. We'll follow up shortly.\n\nDigital Bank Lending Team",
-        "options": {
-          "appendAttribution": false
-        }
-      },
       "webhookId": "f2cb06b8-6043-4efc-9ed9-8ef1fcdf339f",
       "credentials": {
         "gmailOAuth2": {
@@ -2153,14 +2145,6 @@
       }
     },
     {
-      "id": "b025ca15-266b-4474-a816-aceb45441feb",
-      "name": "Alert Ops - Loan Pending Review",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
-      "position": [
-        496,
-        920
-      ],
       "parameters": {
         "sendTo": "ops-team@yourbank.example",
         "subject": "=Loan Pending Review: {{ $json.loan_id }}",
@@ -2170,6 +2154,14 @@
           "appendAttribution": false
         }
       },
+      "id": "b025ca15-266b-4474-a816-aceb45441feb",
+      "name": "Alert Ops - Loan Pending Review",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4200,
+        0
+      ],
       "webhookId": "fe837966-e4e5-4b88-ba4c-ce362b3d4258",
       "credentials": {
         "gmailOAuth2": {
@@ -2179,23 +2171,23 @@
       }
     },
     {
+      "parameters": {
+        "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nWe were unable to process your loan application.\n\nReason: {{ $json.error }}\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
       "id": "a08c2b5b-b713-49e1-a514-6821075c82e4",
       "name": "Send Loan Rejected Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        96,
-        1000
+        3640,
+        280
       ],
-      "parameters": {
-        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
-        "emailType": "text",
-        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nWe were unable to process your loan application.\n\nReason: {{ $json.error }}\n\nDigital Bank Lending Team",
-        "options": {
-          "appendAttribution": false
-        }
-      },
       "webhookId": "1c14bf06-b30d-4f6f-b822-26a9ba29a057",
       "credentials": {
         "gmailOAuth2": {
@@ -2205,14 +2197,6 @@
       }
     },
     {
-      "id": "f765db20-5566-4093-9651-b1310c4dac51",
-      "name": "Deposit Funds",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        -288,
-        1120
-      ],
       "parameters": {
         "method": "POST",
         "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/deposit_funds",
@@ -2238,6 +2222,14 @@
           }
         }
       },
+      "id": "f765db20-5566-4093-9651-b1310c4dac51",
+      "name": "Deposit Funds",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        560
+      ],
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",
@@ -2246,14 +2238,6 @@
       }
     },
     {
-      "id": "7c87a081-07ad-45dd-b76c-acc5d650d379",
-      "name": "Deposit Successful?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        -96,
-        1120
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -2277,26 +2261,34 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "7c87a081-07ad-45dd-b76c-acc5d650d379",
+      "name": "Deposit Successful?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        560
+      ]
     },
     {
+      "parameters": {
+        "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nYour deposit has been received and credited to your account.\n\nAmount deposited: Rs {{ ($json.amount / 100).toFixed(2) }}\nNew balance: Rs {{ ($json.new_balance / 100).toFixed(2) }}\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
       "id": "67e0c85a-79f6-4968-b2c9-d43a69015a11",
       "name": "Send Deposit Confirmation Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        96,
-        1080
+        3640,
+        420
       ],
-      "parameters": {
-        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
-        "emailType": "text",
-        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nYour deposit has been received and credited to your account.\n\nAmount deposited: Rs {{ ($json.amount / 100).toFixed(2) }}\nNew balance: Rs {{ ($json.new_balance / 100).toFixed(2) }}\n\nDigital Bank Customer Support",
-        "options": {
-          "appendAttribution": false
-        }
-      },
       "webhookId": "e9408ab7-5437-4c72-9356-260f52499656",
       "credentials": {
         "gmailOAuth2": {
@@ -2306,29 +2298,212 @@
       }
     },
     {
+      "parameters": {
+        "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nWe were unable to process your deposit.\n\nReason: {{ $json.error }}\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
       "id": "a66c9d17-cd90-4345-9b3d-03cc3b4c02f0",
       "name": "Send Deposit Rejected Email",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        96,
-        1160
+        3640,
+        560
       ],
-      "parameters": {
-        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }}",
-        "emailType": "text",
-        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nWe were unable to process your deposit.\n\nReason: {{ $json.error }}\n\nDigital Bank Customer Support",
-        "options": {
-          "appendAttribution": false
-        }
-      },
       "webhookId": "74a24e95-e124-45c0-99e5-043c83462019",
       "credentials": {
         "gmailOAuth2": {
           "id": "IrWmPXzOkHIt9fdU",
           "name": "Gmail account"
         }
+      }
+    },
+    {
+      "id": "2c850a2b-2fe9-4ca9-8f5d-f42356af34f0",
+      "name": "Regex Uncertain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2520,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "regex-unknown",
+              "leftValue": "={{ $json.intent }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "UNKNOWN"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "10a8d197-2986-4570-8235-8859bb6df657",
+      "name": "Groq Chat Model (Intent Classifier)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        760
+      ],
+      "parameters": {
+        "model": "openai/gpt-oss-safeguard-20b",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "credentials": {
+        "groqApi": {
+          "id": "f0I08FemfuBnyTu1",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "id": "5a40c985-2eb2-4b17-b131-75309b5b291b",
+      "name": "Classify Intent via LLM",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2800,
+        560
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own balance/statement. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
+        }
+      }
+    },
+    {
+      "id": "14199e74-d0c7-4b41-9fcb-61903441cc91",
+      "name": "Finalize LLM-Classified Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const original = $('Classify Intent & Authorize Request').item.json;\nconst validLabels = ['JOINT_OPEN','OPEN_ACCOUNT','DISPUTE','LOAN_APPLICATION','DEPOSIT','STANDING_ORDER','TRANSFER','BALANCE','POLICY_RAG','UNAUTHORIZED_ACCESS','UNKNOWN'];\n\nlet intent = String(($json.output || $json.text || '')).trim().toUpperCase().replace(/[^A-Z_]/g, '');\nif (!validLabels.includes(intent)) intent = 'UNKNOWN';\n\nconst meta = { fromEmail: original.fromEmail, subject: original.subject, bodyText: original.bodyText, messageId: original.messageId };\nconst authorizedAccounts = original.authorizedAccounts || [];\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\nfunction extractAmountMinor(text) {\n  const amtMatch = text.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = (meta.bodyText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = extractAmountMinor(rawText);\n  let destAccount = null;\n  const acctMatch = (meta.bodyText || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = (meta.bodyText || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  const amountMinor = extractAmountMinor(rawText);\n  let termMonths = 12;\n  const termMatch = rawText.match(/(\\d+)\\s*(month|months|year|years)/i);\n  if (termMatch) {\n    const n = parseInt(termMatch[1], 10);\n    termMonths = /year/i.test(termMatch[2]) ? n * 12 : n;\n  }\n  loanDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountMinor, term_months: termMonths };\n} else if (intent === 'DEPOSIT') {\n  const amountMinor = extractAmountMinor(rawText);\n  depositDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountMinor };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: original.profile_id,\n    full_name: original.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
+      }
+    },
+    {
+      "id": "4a1b85a6-2324-430a-9dcd-d107ea303ce0",
+      "name": "New Sender Regex Uncertain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "new-sender-unwanted",
+              "leftValue": "={{ $json.wantsOpen }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "new-sender-unpolicy",
+              "leftValue": "={{ $json.wantsPolicy }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEqual",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c5424b56-21eb-453f-b6d2-8a344321a65c",
+      "name": "Groq Chat Model (New Sender Classifier)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        2520,
+        200
+      ],
+      "parameters": {
+        "model": "openai/gpt-oss-safeguard-20b",
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "credentials": {
+        "groqApi": {
+          "id": "f0I08FemfuBnyTu1",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "id": "676beaa9-940a-4f35-9260-ff24f78fcfb1",
+      "name": "Classify New Sender Intent via LLM",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2520,
+        0
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "This email is from someone who is NOT yet a bank customer. Read the body (authoritative) and subject, then respond with EXACTLY ONE WORD: OPEN_ACCOUNT, POLICY, or OTHER.\n\nOPEN_ACCOUNT: any wording for wanting to open/create/start/set up a personal bank account, sign up, register, or become a customer.\nPOLICY: asking a question about the bank's fees, limits, rules, policies, hours, or services -- they do not need an account to ask this.\nOTHER: anything else (spam, small talk, unrelated topic, or a request like a transfer/balance check that a non-customer cannot do).\n\nDo not explain. Do not add punctuation. Output only the single word."
+        }
+      }
+    },
+    {
+      "id": "535f64bc-dc9d-40c1-9db7-c6be9b56b2bb",
+      "name": "Apply New Sender LLM Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const original = $('Extract New Sender Intent').item.json;\nconst raw = String(($json.output || $json.text || '')).trim().toUpperCase().replace(/[^A-Z]/g, '');\n\nconst wantsOpen = raw === 'OPEN_ACCOUNT' || raw === 'OPENACCOUNT';\nconst wantsPolicy = raw === 'POLICY';\n\nreturn [{\n  json: {\n    wantsOpen,\n    wantsPolicy,\n    fullName: original.fullName,\n    accountType: original.accountType,\n    fromEmail: original.fromEmail,\n    subject: original.subject,\n    bodyText: original.bodyText\n  }\n}];"
       }
     }
   ],
@@ -2394,17 +2569,6 @@
         [
           {
             "node": "Classify Intent & Authorize Request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Classify Intent & Authorize Request": {
-      "main": [
-        [
-          {
-            "node": "Route by Intent",
             "type": "main",
             "index": 0
           }
@@ -2622,17 +2786,6 @@
         [
           {
             "node": "Send Additional Account Opened Email",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract New Sender Intent": {
-      "main": [
-        [
-          {
-            "node": "New Sender Route",
             "type": "main",
             "index": 0
           }
@@ -3062,6 +3215,130 @@
           }
         ]
       ]
+    },
+    "Classify Intent & Authorize Request": {
+      "main": [
+        [
+          {
+            "node": "Regex Uncertain?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Intent via LLM": {
+      "main": [
+        [
+          {
+            "node": "Finalize LLM-Classified Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize LLM-Classified Intent": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model (Intent Classifier)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify Intent via LLM",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract New Sender Intent": {
+      "main": [
+        [
+          {
+            "node": "New Sender Regex Uncertain?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Sender Regex Uncertain?": {
+      "main": [
+        [
+          {
+            "node": "Classify New Sender Intent via LLM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "New Sender Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model (New Sender Classifier)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify New Sender Intent via LLM",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify New Sender Intent via LLM": {
+      "main": [
+        [
+          {
+            "node": "Apply New Sender LLM Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply New Sender LLM Intent": {
+      "main": [
+        [
+          {
+            "node": "New Sender Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regex Uncertain?": {
+      "main": [
+        [
+          {
+            "node": "Classify Intent via LLM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -3069,7 +3346,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "44a97a4a-31b2-495a-a1e0-e079792dad82",
+  "versionId": "bcc628c1-9bf8-4c2c-abdf-0219ace66f54",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
