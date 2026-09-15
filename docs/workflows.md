@@ -11,8 +11,10 @@ The full operator manual (credentials, import/activation order, real Gmail test 
 | WF-04 RAG Support | Sub-workflow + webhook (`/webhook/support-case`) | LangChain agent (Groq + Pinecone + Gemini) drafts a grounded policy answer, or falls back to "needs human" below a 0.7 confidence/grounded threshold. |
 | WF-05 Human Approval | Webhook (`/webhook/approve-draft`) | The only path that can send a RAG draft to a customer. Approve / edit / reject, with an audit log entry either way. |
 | WF-06 Reconciliation | Schedule (midnight UTC) | Calls `run_reconciliation()`, alerts ops on any ledger discrepancy. Also runs `promote_minors_to_adult()` on the same schedule. |
-| WF-08 Joint Invitation Expiry Sweep | Schedule (every minute) | Calls `expire_stale_joint_invitations()`, emails each inviter whose invitation expired unanswered. |
+| WF-08 Joint Invitation Expiry Sweep | Schedule (every minute) — **deactivated** | Superseded: was burning ~1,440 n8n executions/day regardless of need. Kept, deactivated, for optional temporary use during a live demo. The same logic now runs opportunistically inside WF-00 (see below) at zero standing cost. |
 | WF-09 Seed Policy Documents | Manual/one-time utility | Embeds the 11 PKR-denominated policy documents into Pinecone via Gemini embeddings — re-run after any Pinecone index recreation. |
+
+**Invitation expiry sweep (folded into WF-00)**: a parallel branch off the Gmail Trigger node calls `expire_stale_joint_invitations()` on every real incoming email and notifies any inviter whose invitation expired. See `decisions.md` Session 4 for why this replaced the standalone WF-08 scheduler.
 
 ## Changes made in the 2026-09-14 review
 
