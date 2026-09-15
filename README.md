@@ -38,7 +38,7 @@ Modern banking demands seamless email interaction without sacrificing financial 
 | **Self-Service Account Opening** | ✅ Implemented | n8n (WF-00) + Supabase Auth Admin API | Single + joint accounts, no manual KYC |
 | **Joint Account Invitations** | ✅ Implemented | n8n (WF-00, WF-08) + Supabase | 5-minute accept/decline window, auto-expiry |
 | **Public RAG Support Chatbot** | ✅ Implemented | n8n (WF-04) | Answers anyone, not just customers |
-| **Policy RAG Vector Search** | ⚠️ Wired, needs reindex | Pinecone Vector Database | Index: `banking-policy-index` (ns: `banking_policy`) — see [Known Dependencies](#-known-dependencies--architectural-boundaries) |
+| **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | Index: `banking-policy-index` (3072-dim, ns: `banking_policy`), 11 docs loaded |
 | **LLM Support Drafting** | ✅ Implemented | Groq Cloud | `llama-3.3-70b-versatile` |
 | **Text Embeddings Engine** | ✅ Implemented | Google Gemini API | `gemini-embedding-001` |
 | **Human Approval Queue** | ✅ Implemented | n8n Webhook Gate | `POST /webhook/approve-draft` |
@@ -469,16 +469,11 @@ Judges and evaluators can test the live autonomous banking platform directly by 
 2. **Fraud Microservice Reachability**: n8n must be able to reach `PYTHON_SERVICE_URL`. If the microservice is offline, `WF-03` defaults to a defensive safety hold.
 3. **Pinecone Indexing**: RAG policy retrieval requires pre-populated vector embeddings in Pinecone (`banking-policy-index`, namespace `banking_policy`).
 
-### ⚠️ One open action item
+### ✅ No open action items
 
-Railway's Supabase env vars are fixed. The remaining item requires a Pinecone console action:
+Railway's Supabase env vars are fixed, and the Pinecone index (`banking-policy-index`, recreated at 3072 dimensions to match Google's current `gemini-embedding-001` embedding model) has been seeded with 11 PKR policy documents. RAG support is verified live and grounded end-to-end.
 
-1. **The Pinecone index `banking-policy-index` needs to be recreated at 3072 dimensions.** It was created at 768 dimensions (matching the older `text-embedding-004` model this project was originally built around), but Google has since retired that model — the current one, `gemini-embedding-001`, only outputs its full 3072-dimension vector through n8n's LangChain node (no truncation parameter exposed). The index currently has zero vectors in it, so this is a clean recreate:
-   - Pinecone console → delete `banking-policy-index` → create it again, same name, **3072 dimensions**, `cosine` metric.
-   - Then re-run the **WF-09 Seed Policy Documents** workflow once (n8n Cloud → Executions → run manually) to load the 11 policy documents.
-   - Until this is done, RAG support degrades gracefully to a "needs human review" draft rather than crashing — a real bug in that fallback path (an infinite retry loop on empty search results) was also found and fixed this session.
-
-Full list of what was checked, fixed, and left open: [`docs/decisions.md`](docs/decisions.md#known-live-issues-at-time-of-this-audit-2026-09-14) and its [Session 2 Addendum](docs/decisions.md#session-2-addendum-account-opening-joint-invitations-pkr-governance-public-rag).
+Full history of what was checked, fixed, and resolved: [`docs/decisions.md`](docs/decisions.md#known-live-issues-at-time-of-this-audit-2026-09-14) and its [Session 2](docs/decisions.md#session-2-addendum-account-opening-joint-invitations-pkr-governance-public-rag) / Session 3 addenda.
 
 ---
 
