@@ -69,3 +69,28 @@ Both tables have RLS enabled with an explicit deny-all policy for `anon` and `au
 The confirm-and-execute half required no new SQL: `respond_to_joint_action_by_ref()` and `finalize_joint_action_if_complete()` have handled `action_type = 'close_account'` since migration 014.
 
 Note the loan check is new here and does not exist in `close_account()` itself - an outstanding loan is a debt to the bank, and the account it is repaid from cannot simply disappear.
+
+## 019 - 026: closing the last gaps against the capstone brief
+
+| # | File | What it adds |
+|---|---|---|
+| 019 | `019_joint_governance_completion.sql` | `remove_holder` and `set_authority` joint action types. `remove_account_holder()`, `request_holder_removal()` (refused while a loan or hold is outstanding, or if it would leave zero holders, or strip a guardian off a minor account), `request_holder_addition()` (discloses every encumbrance), `request_authority_change()` and `apply_authority_change()`. |
+| 020 | `020_reversals_and_debt_tracking.sql` | `account_debts` plus `reverse_transaction()`, `sweep_outstanding_debts()` and `get_account_debt_summary()`. A reversal shortfall becomes an explicit receivable, never a negative balance - `CHECK (balance >= 0)` is untouched. |
+| 021 | `021_business_day_calendar_and_so_notifications.sql` | `bank_holidays`, `is_business_day()`, `adjust_for_business_day()`. `execute_standing_order()` now honours all three `weekend_holiday_rule` values against a real calendar and returns the account numbers, amount and holder emails on failure so the customer can be told. |
+| 022 | `022_interest_accrual_and_statements.sql` | `interest_rates`, `interest_accruals`, `accrue_monthly_interest()` (idempotent per account per month) and `generate_account_statement()`. |
+| 023 | `023_disputes_and_reversal_approval.sql` | `disputes` table, `raise_dispute()`, `add_dispute_holder_input()`, `resolve_dispute()`. `resolve_ops_approval()` learns the `dispute` and `transfer_reversal` request types. |
+| 024 | `024_fix_statement_entry_type_case.sql` | Fixes 022: `entry_type` is stored lowercase but was compared uppercase, so every statement reported zero credits and zero debits while listing the correct entries. |
+| 025 | `025_incoming_holder_must_accept.sql` | `accept_holder_addition()`. The person being added to an account must agree, not just the existing holders - which needed its own mechanism because `record_joint_consent()` requires the consenter to already be a holder. |
+| 026 | `026_joint_action_lookup_allows_invitee.sql` | Fixes 019/025: `get_joint_action_by_ref()` refused any non-holder, so an invited holder could not answer their own invitation. |
+
+### New tables
+
+**`account_debts`** - a receivable against an account, created when a reversal cannot be fully clawed back. `amount_original`, `amount_outstanding`, `status` (`outstanding` | `settled` | `written_off`), linked to both the original and the reversal transaction.
+
+**`bank_holidays`** - `holiday_date`, `name`, `is_estimated`. Lunar Eid dates are flagged estimated because their Gregorian dates are announced close to the day and must be corrected each year.
+
+**`interest_rates`** / **`interest_accruals`** - the rate schedule per account type, and one accrual row per account per month with a unique constraint on `(account_id, period_start)` that makes re-running the job safe.
+
+**`disputes`** - `ref_code` (`DSP-`), the disputed transaction, who raised it, `holder_input` as a JSONB array of each co-holder position, and the resolution. `is_joint_account` drives whether co-holder input is collected.
+
+All four have RLS enabled with an explicit deny-all policy for `anon` and `authenticated`. Every new function is `SECURITY DEFINER`, owned by `banking_functions`, revoked from `PUBLIC` and granted only to `service_role`.

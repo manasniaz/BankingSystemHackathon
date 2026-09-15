@@ -67,18 +67,46 @@ A standing order is a transfer that repeats on a schedule. They are created auto
 - Orders are checked **every hour** and execute when due.
 - If an execution fails — most commonly insufficient funds — we retry. After **3 failed attempts** the order is stopped permanently and our operations team is alerted to look at it.
 - A standing order that is edited or deleted while an execution is in flight is handled safely; the in-flight execution completes or rolls back cleanly, it never half-runs.
-- **Weekend and holiday handling:** this system settles instantly and internally rather than over interbank rails, so there is no clearing delay to work around. Orders execute on their due date whatever day of the week it falls on.
+- **Weekend and holiday handling.** Each standing order carries one of three rules:
+  - `next_business_day` (the default) — a payment due on a weekend or a public holiday moves forward to the next working day.
+  - `process_early` — it moves backward to the previous working day instead.
+  - `allow_weekend` — it settles on the calendar date whatever day that is. This is a legitimate choice here, not an oversight: we settle instantly against our own ledger, so unlike a real interbank payment there is no clearing window to miss.
+  
+  Our calendar covers Pakistan's public holidays. The Islamic-calendar holidays (Eid al-Fitr, Eid al-Adha, Ashura, Eid Milad un-Nabi) are lunar and their exact dates are confirmed close to the day, so we review them each year rather than treating our estimates as fixed.
+- If a payment fails permanently, **you are told directly** — not just our operations team. We email every holder of the paying account with what failed, why, and what to do about it, and we say plainly if it was a loan repayment, because your loan is still owed.
 
 An account with an active standing order paying out of it cannot be closed until that order is cancelled.
 
 ## 8. Reversals and chargebacks
 
-There is no automated reversal. Once a transfer has completed, the money is in the recipient's account and only they can send it back.
+**There is no self-service undo.** You cannot reverse your own completed transfer by asking, and no automated process will do it for you. That is deliberate: a self-service undo on a completed payment would be trivially abusable.
 
-If a transfer was fraudulent, raise a dispute (see the Security and Fraud policy) and a human will investigate. We deliberately do not offer a self-service "undo" on a completed transfer, because that would be trivially abusable.
+A completed transfer is reversed only through a **human decision** — either a dispute that a specialist upholds, or a reversal an operator authorises directly. Raise a dispute (see the Security and Fraud policy) and a person will investigate.
+
+**What happens when a reversal is approved:**
+
+1. We take back whatever the recipient still holds, using the same double-entry mechanism as any transfer, and return it to you.
+2. **If they have already spent some or all of it**, we recover what is there and record the remainder as a **debt owed to the bank by the recipient**. Their balance is never pushed below zero — a shortfall is tracked as a debt, not as a negative balance.
+3. That debt is then collected automatically from money the recipient receives later, until it is cleared.
+
+So a reversal may return your money in stages rather than all at once, depending on what the recipient still had. You are told what was recovered immediately and what is being collected.
 
 ## 9. Currency
 
 Every account is in PKR and we do not convert between currencies. A transfer between two accounts of different currencies is refused rather than converted at a rate we haven't published.
 
 Internally, all amounts are stored as whole **paisa** (1 PKR = 100 paisa) using integers, so no rounding error can ever accumulate across transactions.
+
+## 10. Statements
+
+Ask us for a statement any time and we will email it to you.
+
+- **Default period:** the last full calendar month.
+- Say *"this month"* for month-to-date, *"this year"* for year-to-date, or give explicit dates: *"statement from 2026-08-01 to 2026-08-31"*.
+- If you hold more than one account, tell us which — we will ask rather than guess.
+
+A statement shows your opening balance, everything that came in, everything that went out, your closing balance, and every individual transaction with the running balance after it. Any outstanding debt on the account is shown too.
+
+The figures are rebuilt from the ledger itself rather than from any running total, and we check that the statement adds up — opening plus money in, minus money out, must equal closing — before it is sent. If it does not, we do not send it; our team is alerted instead.
+
+If you see something on a statement you do not recognise, reply and tell us. We will open a dispute and a specialist will investigate.

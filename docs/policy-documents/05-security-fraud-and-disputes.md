@@ -55,13 +55,21 @@ This is deliberate and not negotiable. A hold that the suspected party can clear
 
 ## 5. Raising a dispute
 
-If you see a transaction you did not make, email us. Say what you're disputing and roughly when it happened.
+If you see a transaction you did not make, email us. Say what you are disputing and roughly when it happened. If you can find the transaction reference on your statement, include it — that lets us attach the dispute to the exact payment.
 
-Disputes are **always** handled by a human specialist. There is no automated dispute resolution, because the question "did this person actually authorise this?" is exactly the kind of judgement a machine should not be making on its own.
+You get a dispute reference beginning `DSP-` straight away, so you know it is on record.
 
-We acknowledge your dispute immediately so you know it's been received, then a specialist investigates and contacts you.
+Disputes are **always** decided by a human specialist. There is no automated dispute resolution, because "did this person actually authorise this?" is exactly the judgement a machine should not be making alone.
 
-**There is no automated reversal.** A completed transfer is not undone by the system on request — see the Payments policy. A dispute that resolves in your favour is settled by our operations team as a deliberate act, not by an automatic rollback.
+**On a joint account** there is an explicit rule about who gets a say:
+
+- **Raising is unilateral.** Any one holder can raise a dispute without the others' permission. Reporting suspected fraud should never wait on someone else's reply.
+- **Every other holder is asked for their side** and can agree or disagree, with a comment.
+- **The specialist decides**, with all of those positions in front of them. No single answer settles it.
+
+**What happens if your dispute is upheld.** If a specific transaction was identified, it is reversed: we recover whatever the recipient still holds and return it to you. If they have already spent some of it, the remainder is recorded as a debt they owe, collected from money they receive later — their balance is never pushed negative. So the money may come back in stages, and we tell you what was recovered straight away versus what is still being collected.
+
+There is still no *automated* reversal and no self-service undo. A reversal only ever happens because a person decided it should.
 
 ## 6. Audit trail
 

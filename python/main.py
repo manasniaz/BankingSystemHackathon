@@ -276,6 +276,308 @@ def _persist_and_respond(
     )
 
 
+# =============================================================================
+# Interest, statements and reconciliation
+#
+# Division of labour, consistent with the zero-trust rule the rest of the system
+# follows: Postgres owns every movement of money, because that is where the
+# ledger and its constraints live and where atomicity is real. Python owns the
+# computation and presentation around it -- projecting interest that has not been
+# paid yet, rendering a statement a human can read, and analysing reconciliation
+# output for drift. Python never writes a balance directly.
+# =============================================================================
+
+PAISA_PER_RUPEE = 100
+
+
+def _rs(paisa: Optional[int]) -> str:
+    """Format integer paisa as a PKR amount. Money is never floated around."""
+    value = int(paisa or 0)
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    return f"{sign}Rs {value // PAISA_PER_RUPEE:,}.{value % PAISA_PER_RUPEE:02d}"
+
+
+def _call_rpc(supabase: Client, name: str, params: Dict[str, Any]) -> Any:
+    try:
+        return supabase.rpc(name, params).execute().data
+    except Exception as e:
+        logger.error(f"RPC {name} failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database call {name} failed: {str(e)}"
+        )
+
+
+class AccrueInterestRequest(BaseModel):
+    as_of: Optional[str] = Field(default=None, description="YYYY-MM-DD; defaults to today")
+    dry_run: bool = Field(default=False, description="Project the interest without paying it")
+
+
+class ProjectInterestRequest(BaseModel):
+    balance: int = Field(..., ge=0, description="Balance in paisa")
+    annual_rate_pct: float = Field(default=5.0, ge=0, description="Annual rate, percent")
+    months: int = Field(default=12, gt=0, le=600, description="Months to project")
+
+
+@app.post("/accrue-interest")
+def accrue_interest(payload: AccrueInterestRequest):
+    """
+    Runs the monthly interest accrual for the last fully elapsed month.
+
+    Safe to call repeatedly: the accrual is keyed on (account_id, period_start)
+    with a unique constraint, so a second run for the same month pays nothing
+    and reports the accounts it skipped.
+    """
+    supabase = get_supabase_client()
+
+    if payload.dry_run:
+        # Project what WOULD be paid, touching nothing. Same floor-rounding rule
+        # as the database so the projection matches the eventual payment exactly.
+        try:
+            rates = {r["account_type"]: float(r["annual_rate_pct"])
+                     for r in supabase.table("interest_rates").select("*").execute().data or []}
+            accounts = supabase.table("accounts") \
+                .select("id, account_number, account_type, balance, status") \
+                .eq("status", "active").gt("balance", 0).execute().data or []
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+        projected = []
+        total = 0
+        for acc in accounts:
+            if acc.get("account_number") == "TREASURY-MAIN":
+                continue
+            rate = rates.get(acc.get("account_type"), 0.0)
+            if rate <= 0:
+                continue
+            interest = int((acc["balance"] * (rate / 100.0)) // 12)
+            if interest <= 0:
+                continue
+            total += interest
+            projected.append({
+                "account_number": acc["account_number"],
+                "balance": acc["balance"],
+                "annual_rate_pct": rate,
+                "interest_amount": interest,
+                "interest_formatted": _rs(interest),
+            })
+
+        return {
+            "success": True, "dry_run": True,
+            "accounts_would_be_paid": len(projected),
+            "total_interest": total, "total_interest_formatted": _rs(total),
+            "details": projected,
+        }
+
+    result = _call_rpc(supabase, "accrue_monthly_interest", {"p_as_of": payload.as_of})
+    if isinstance(result, dict):
+        result["total_interest_formatted"] = _rs(result.get("total_interest"))
+    logger.info(f"Interest accrual completed: {result}")
+    return result
+
+
+@app.post("/project-interest")
+def project_interest(payload: ProjectInterestRequest):
+    """
+    Month-by-month interest projection on a balance. Pure computation -- touches
+    no account and moves no money. Used to answer "what would I earn?" without
+    creating a financial record to answer a hypothetical.
+    """
+    monthly_rate = payload.annual_rate_pct / 100.0 / 12.0
+    balance = payload.balance
+    schedule = []
+    total_interest = 0
+
+    for month in range(1, payload.months + 1):
+        # Floor to whole paisa each month, matching the accrual rule exactly:
+        # projecting with floats and rounding at the end would drift from what
+        # the customer is actually paid.
+        interest = int(balance * monthly_rate)
+        if interest < 0:
+            interest = 0
+        balance += interest
+        total_interest += interest
+        schedule.append({
+            "month": month,
+            "interest": interest,
+            "interest_formatted": _rs(interest),
+            "closing_balance": balance,
+            "closing_balance_formatted": _rs(balance),
+        })
+
+    return {
+        "success": True,
+        "opening_balance": payload.balance,
+        "opening_balance_formatted": _rs(payload.balance),
+        "annual_rate_pct": payload.annual_rate_pct,
+        "months": payload.months,
+        "total_interest": total_interest,
+        "total_interest_formatted": _rs(total_interest),
+        "closing_balance": balance,
+        "closing_balance_formatted": _rs(balance),
+        "schedule": schedule,
+    }
+
+
+class StatementRequest(BaseModel):
+    account_id: str = Field(..., description="UUID of the account")
+    period_start: Optional[str] = Field(default=None, description="YYYY-MM-DD")
+    period_end: Optional[str] = Field(default=None, description="YYYY-MM-DD")
+
+
+@app.post("/generate-statement")
+def generate_statement(payload: StatementRequest):
+    """
+    Produces a rendered, human-readable account statement.
+
+    The figures come from the ledger via generate_account_statement(); this
+    endpoint's job is turning them into something a customer can actually read
+    in an email, and checking that the statement internally balances before
+    sending it out.
+    """
+    supabase = get_supabase_client()
+    data = _call_rpc(supabase, "generate_account_statement", {
+        "p_account_id": payload.account_id,
+        "p_from": payload.period_start,
+        "p_to": payload.period_end,
+    })
+
+    if not isinstance(data, dict) or not data.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(data or {}).get("error", "Could not generate statement")
+        )
+
+    opening = int(data.get("opening_balance") or 0)
+    credits = int(data.get("total_credits") or 0)
+    debits = int(data.get("total_debits") or 0)
+    closing = int(data.get("closing_balance") or 0)
+
+    # A statement whose own arithmetic does not close is a statement we must not
+    # send. Opening + credits - debits must equal closing, or the ledger and the
+    # rendering disagree and a human needs to look.
+    expected_closing = opening + credits - debits
+    balanced = expected_closing == closing
+
+    lines = [
+        "DIGITAL BANK - ACCOUNT STATEMENT",
+        "=" * 60,
+        f"Account:        {data.get('account_number')} ({data.get('account_type')})",
+        f"Period:         {data.get('period_start')} to {data.get('period_end')}",
+        f"Currency:       {data.get('currency')}",
+        "",
+        f"Opening balance:  {_rs(opening):>20}",
+        f"Money in:         {_rs(credits):>20}",
+        f"Money out:        {_rs(debits):>20}",
+        f"Closing balance:  {_rs(closing):>20}",
+        "",
+    ]
+
+    entries = data.get("entries") or []
+    if entries:
+        lines.append(f"{'DATE':<12} {'DESCRIPTION':<32} {'IN/OUT':<8} {'AMOUNT':>14} {'BALANCE':>14}")
+        lines.append("-" * 84)
+        for e in entries:
+            posted = str(e.get("posted_at") or "")[:10]
+            desc = str(e.get("description") or "")[:32]
+            direction = "OUT" if str(e.get("entry_type", "")).upper() == "DEBIT" else "IN"
+            lines.append(
+                f"{posted:<12} {desc:<32} {direction:<8} "
+                f"{_rs(e.get('amount')):>14} {_rs(e.get('balance_after')):>14}"
+            )
+    else:
+        lines.append("No transactions in this period.")
+
+    debt = int(data.get("outstanding_debt") or 0)
+    if debt > 0:
+        lines += ["", f"OUTSTANDING DEBT ON THIS ACCOUNT: {_rs(debt)}",
+                  "This is collected automatically from funds received into the account."]
+
+    lines += ["", f"Current balance: {_rs(data.get('current_balance'))}",
+              "=" * 60]
+
+    if not balanced:
+        logger.error(
+            f"Statement for {data.get('account_number')} does not balance: "
+            f"opening {opening} + credits {credits} - debits {debits} = {expected_closing}, "
+            f"but closing is {closing}"
+        )
+
+    return {
+        "success": True,
+        "balanced": balanced,
+        "account_number": data.get("account_number"),
+        "period_start": data.get("period_start"),
+        "period_end": data.get("period_end"),
+        "opening_balance": opening,
+        "total_credits": credits,
+        "total_debits": debits,
+        "closing_balance": closing,
+        "entry_count": data.get("entry_count"),
+        "outstanding_debt": debt,
+        "holder_emails": data.get("holder_emails") or [],
+        "statement_text": "\n".join(lines),
+    }
+
+
+class ReconcileRequest(BaseModel):
+    run_date: Optional[str] = Field(default=None, description="YYYY-MM-DD; defaults to today")
+    sweep_debts: bool = Field(default=True, description="Also collect outstanding debts")
+
+
+@app.post("/reconcile")
+def reconcile(payload: ReconcileRequest):
+    """
+    Nightly integrity run: reconcile the ledger, then collect any outstanding
+    debt from accounts that can now cover it.
+
+    The arithmetic lives in Postgres (it reads the ledger under the same
+    transactional guarantees that wrote it). This endpoint orchestrates the two
+    steps, classifies the outcome, and decides whether a human needs waking.
+    """
+    supabase = get_supabase_client()
+
+    run_date = payload.run_date or datetime.now(timezone.utc).date().isoformat()
+    recon = _call_rpc(supabase, "run_reconciliation", {"p_run_date": run_date})
+
+    if not isinstance(recon, dict):
+        raise HTTPException(status_code=500, detail="Unexpected reconciliation response")
+
+    debits = int(recon.get("total_debits") or 0)
+    credits = int(recon.get("total_credits") or 0)
+    drift = debits - credits
+    discrepancies = recon.get("discrepancies") or []
+    passed = bool(recon.get("passed")) and drift == 0 and len(discrepancies) == 0
+
+    sweep = None
+    if payload.sweep_debts:
+        sweep = _call_rpc(supabase, "sweep_outstanding_debts", {})
+
+    if not passed:
+        logger.error(
+            f"RECONCILIATION FAILED for {run_date}: drift={drift} paisa, "
+            f"{len(discrepancies)} account discrepancies"
+        )
+    else:
+        logger.info(f"Reconciliation passed for {run_date}: {_rs(debits)} on both sides")
+
+    return {
+        "success": True,
+        "run_date": run_date,
+        "passed": passed,
+        "requires_human_attention": not passed,
+        "total_debits": debits,
+        "total_credits": credits,
+        "total_debits_formatted": _rs(debits),
+        "system_drift": drift,
+        "system_drift_formatted": _rs(drift),
+        "discrepancy_count": len(discrepancies),
+        "discrepancies": discrepancies,
+        "debt_sweep": sweep,
+    }
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

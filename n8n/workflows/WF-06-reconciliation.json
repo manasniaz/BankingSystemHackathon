@@ -327,6 +327,87 @@
           "name": "Supabase account"
         }
       }
+    },
+    {
+      "id": "s11-0007-4aaa-9007-aaaaaaaaaaa7",
+      "name": "Sweep Outstanding Debts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1020,
+        480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/sweep_outstanding_debts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      },
+      "notes": "A reversal that could not be fully clawed back leaves a debt. This collects it from whatever the account holds, without ever pushing the balance below zero. Runs nightly so a debtor who receives money today pays it down tonight."
+    },
+    {
+      "id": "s11-0008-4aaa-9008-aaaaaaaaaaa8",
+      "name": "Accrue Monthly Interest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/accrue_monthly_interest",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_as_of: null }) }}"
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      },
+      "notes": "Safe to run every night even though interest is monthly: the accrual is keyed on (account_id, period_start) with a unique constraint, so only the first run after a month ends pays anything and every later run that month reports the accounts it skipped."
     }
   ],
   "connections": {
@@ -423,6 +504,28 @@
           }
         ]
       ]
+    },
+    "Expire Stale Guardian Requests": {
+      "main": [
+        [
+          {
+            "node": "Sweep Outstanding Debts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sweep Outstanding Debts": {
+      "main": [
+        [
+          {
+            "node": "Accrue Monthly Interest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -430,7 +533,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "88a656b0-1ee6-440c-a313-11315e42435b",
+  "versionId": "3a1ef8b6-a726-4c3d-8fd1-c35e9ccb9d83",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

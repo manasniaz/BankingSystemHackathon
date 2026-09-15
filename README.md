@@ -33,13 +33,16 @@ Modern banking demands seamless email interaction without sacrificing financial 
 |---|---|---|---|
 | **Bank Gmail Intake** | ✅ Implemented | Live Google Workspace / Gmail | Shared privately with evaluators — see "Live Demo & Judge Testing Guide" |
 | **n8n Orchestration Plane** | ✅ Implemented | n8n Cloud | 9 Workflows Active (WF-00 to WF-06, WF-08, WF-09) |
-| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 19 Tables + 40+ Atomic RPCs, currency: PKR |
-| **Fraud Scoring Engine** | ✅ Implemented | Python FastAPI Microservice | `POST /assess-fraud` |
+| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 24 Tables + 59 Atomic RPCs, currency: PKR |
+| **Fraud Scoring Engine** | ✅ Implemented | Python FastAPI Microservice | `POST /assess-fraud` — deterministic, 4 rules |
+| **Interest, Statements & Reconciliation** | ✅ Implemented | Python FastAPI Microservice | `/accrue-interest`, `/project-interest`, `/generate-statement`, `/reconcile` |
+| **Reversals & Debt Tracking** | ✅ Implemented | Supabase RPCs + WF-06 | Chargeback with partial clawback; shortfall booked as a receivable, never a negative balance |
+| **Disputes** | ✅ Implemented | n8n (WF-00) + Supabase | Unilateral to raise, co-holder input collected, always resolved by a human |
 | **Self-Service Account Opening** | ✅ Implemented | n8n (WF-00) + Supabase Auth Admin API | Single, joint and guardian-supervised minor accounts; date of birth required |
 | **Joint Account Invitations** | ✅ Implemented | n8n (WF-00, WF-08) + Supabase | 5-minute accept/decline window, auto-expiry |
 | **Money-In: Deposits & Loans** | ✅ Implemented | n8n (WF-00, WF-05) + Supabase Treasury account | Self-service deposits (capped), loans ≤ Rs 200k instant, ≤ Rs 2M human-reviewed |
 | **Public RAG Support Chatbot** | ✅ Implemented | n8n (WF-04) | Answers anyone, not just customers |
-| **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | Index: `banking-policy-index` (3072-dim, ns: `banking_policy`) — source documents in [`docs/policy-documents/`](docs/policy-documents/), editable via Google Drive sync |
+| **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | `banking-policy-index` (3072-dim). Namespaces: `banking_policy` (live), `banking_policy_v2` (staged from Drive), `fraud_patterns` (10 typologies) — see [`docs/policy-documents/`](docs/policy-documents/) |
 | **LLM Support Drafting** | ✅ Implemented | Groq Cloud | `openai/gpt-oss-safeguard-20b` |
 | **Text Embeddings Engine** | ✅ Implemented | Google Gemini API | `gemini-embedding-001` |
 | **Human Approval Queue** | ✅ Implemented | Dedicated ops Gmail inbox | Operator replies APPROVE / REJECT to a referenced email; `POST /webhook/approve-draft` and `/webhook/approve-loan` remain as a fallback |
@@ -142,6 +145,28 @@ flowchart TD
 * An account is closed only when its balance is exactly **Rs 0.00** and it has no active holds, no active standing orders paying out of it, and no outstanding or pending loan. Each blocker is reported in plain language with the amount or count involved, up front, before anything is created.
 * **Closure is irreversible and is never acted on from a single email.** Every holder of the account — *including the person who asked* — must confirm by replying `APPROVE` to an emailed `JNT-XXXXXXXX` reference code. On a joint account a single `REJECT` from any holder stops it; an unanswered request expires after 7 days and the account stays open.
 * A minor on a guardian-supervised account cannot request closure; the guardian must.
+
+### 3d. Removing a Holder, and Changing the Mandate
+* **Removing a joint holder requires every holder to agree, including the person being removed.** You cannot be ejected from an account you are liable for without consenting, and you cannot walk away from one unilaterally either.
+* Refused outright while the account carries an outstanding loan or an active hold — you cannot shrink the set of people answerable for a debt — or if it would leave the account with no holders at all (close it instead), or strip the guardian off an account a minor still holds.
+* **Adding a holder discloses what they are inheriting.** Active holds, outstanding loan balance and unpaid debt are all stated in the approval request, and **the person being added must accept too**, not just the existing holders. Joint liability is not something other people can sign you up for.
+* The transfer mandate and the closure rule can both be changed after opening, by unanimous consent. Majority closure is refused below three holders, because with two it is arithmetically identical to unanimous and would only mislead.
+
+### 3e. Reversals, Chargebacks and Debt
+* There is **no automated reversal**. A completed transfer is only ever reversed through a human decision — an upheld dispute, or an ops-approved reversal.
+* A reversal claws back whatever the recipient still holds, through the same double-entry primitive as any other transfer.
+* **If the money is already spent, the shortfall becomes an explicit debt, not a negative balance.** `CHECK (balance >= 0)` is never relaxed; the unrecoverable remainder is booked in `account_debts` as a receivable, which is how a real bank models it.
+* Outstanding debt is collected automatically each night from whatever the account receives, and is disclosed on statements and to anyone being added as a holder.
+
+### 3f. Disputes
+* **Raising a dispute is unilateral.** On a joint account, any single holder can raise one without waiting for the others — requiring permission to report suspected fraud would gate the fastest way to stop money leaving behind someone who may be asleep, unreachable, or the problem.
+* **Input is collected from every other holder**, who are emailed the detail and reply AGREE or DISAGREE with a comment.
+* **Resolution is never automatic and never unilateral.** Every dispute goes to a person, and that person is shown whether the co-holders agreed. Upholding a dispute against an identified transaction reverses it.
+
+### 3g. Interest and Statements
+* Savings accounts earn **5% per annum**, accrued monthly from the treasury through the normal double-entry path so interest income appears in the ledger and in nightly reconciliation. Checking and business accounts earn 0%.
+* Accrual is idempotent on `(account_id, period_start)`, so the nightly job cannot pay a month twice, and interest is only ever accrued for a month that has fully elapsed.
+* Statements derive their opening balance from the ledger itself rather than any cached figure, so a statement is reconstructable from the ledger alone. The renderer **refuses to certify a statement whose own arithmetic does not close**.
 
 ### 4. Background Reconciliation Audit
 * **WF-06 Reconciliation** executes nightly at midnight UTC.
@@ -601,6 +626,37 @@ Send each of these to the Bank Gmail address you were given privately.
 #### Scenario 12: Automated Mail Is Ignored
 Forward any automated notification (a Google security alert, a newsletter, anything from a `no-reply@` address) to the bank.
 * **Expected Response**: **none at all.** The sender is recognised as automated and the execution ends before any lookup, case or reply. Previously the bank politely told `no-reply@accounts.google.com` that it wasn't a registered customer.
+
+---
+
+#### Scenario 13: Get a Statement
+* **Subject**: `Statement`
+* **Body**:
+  ```text
+  Can you send me my statement please.
+  ```
+* **Expected Response**: a rendered statement for **last full calendar month** — opening balance, money in, money out, closing balance, and every transaction with its running balance. Say "this month" for month-to-date, or give explicit dates (`statement from 2026-08-01 to 2026-08-31`).
+* If you hold several accounts and didn't say which, we list them and ask.
+
+---
+
+#### Scenario 14: Raise a Dispute on a Joint Account
+* **Subject**: `Unauthorised transaction`
+* **Body**:
+  ```text
+  I don't recognise a payment on my account. I did not authorise it.
+  ```
+* **System Execution**: creates a tracked dispute with a `DSP-XXXXXXXX` reference and queues it for a human. On a joint account, every **other** holder is emailed for their side.
+* **Expected Response (you)**: acknowledgement with your dispute reference.
+* **Expected Response (co-holders)**: `[DSP-XXXXXXXX] ... has disputed activity on your joint account`, asking them to reply APPROVE (they agree it wasn't authorised) or REJECT (they think it was legitimate), with an optional `NOTE:` line.
+* **Expected Response (ops mailbox)**: the dispute, flagged as joint, with the co-holder positions collected against it.
+* **Ops replies APPROVE** → if a transaction was identified it is **reversed**: whatever the recipient still holds is clawed back, and any shortfall is booked as a debt against them rather than pushing anyone negative.
+
+---
+
+#### Scenario 15: Add and Remove a Joint Holder
+* Adding: every existing holder approves by `JNT-` code **and the person being added must accept** — their email states plainly what they are inheriting, including any outstanding loan balance.
+* Removing: **every holder including the person being removed** must approve. Try it on an account with an outstanding loan and it is refused with the reason.
 
 ---
 

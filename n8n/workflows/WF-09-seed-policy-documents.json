@@ -350,6 +350,190 @@
         }
       },
       "notes": "Reads doc_id from the top level of the item. The original loader on the other branch reads $json.metadata.doc_id, which never resolves because the items put doc_id at the top level - that is why older seeded chunks have no doc_id in their metadata."
+    },
+    {
+      "id": "dd261d2c-1f7e-4bc1-97ed-79aee16987ad",
+      "name": "Seed Fraud Patterns Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        1400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 4
+            }
+          ]
+        }
+      },
+      "notes": "Run by hand after editing the pattern list. The monthly schedule is a safety net only."
+    },
+    {
+      "id": "5713bb93-558f-4192-9229-9b82568edad1",
+      "name": "Fraud Pattern Documents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        1400
+      ],
+      "parameters": {
+        "jsCode": "// Known fraud typologies, written the way an investigator would describe them so\n// a semantic search on a real transaction shape surfaces the right one.\n//\n// These are ADVISORY. They are retrieved after the deterministic rules engine\n// has already frozen an account, and shown to the human deciding whether to\n// release it. They never feed the risk score -- the score stays deterministic\n// and reproducible, which is the entire reason it is not an LLM.\n//\n// Each entry deliberately includes the LEGITIMATE explanations too. A pattern\n// list that only describes guilt trains an operator to confirm the freeze every\n// time, which is how false positives become permanent.\nconst patterns = [\n  { doc_id: 'fraud_velocity_burst', text: 'Velocity burst or structuring. Many transfers out of one account in a short window, each small enough to look unremarkable alone. Signs: more than five transfers in an hour, similar amounts, several different destinations, often outside that customer usual hours. Legitimate explanations: settling a group bill, paying several suppliers on invoice day, a business account running payroll, or someone moving money between their own accounts. Ask whether the destinations are related to each other and whether the customer has done this before.' },\n  { doc_id: 'fraud_account_drain', text: 'Account drain. A single transfer moving the entire or near-entire balance to one destination, frequently one never paid before, often shortly after a login or contact-detail change. This is the signature of a compromised mailbox: whoever controls the email controls the account. Legitimate explanations: paying a deposit on a house or car, closing an account and moving funds, or an emergency medical payment. Ask whether the customer can confirm the destination through a channel other than the email that requested it.' },\n  { doc_id: 'fraud_new_beneficiary_large', text: 'Large first payment to a brand new beneficiary. The destination account has never received money from this customer and the amount is far above their normal transfer size. Strongly associated with invoice redirection fraud, where a genuine supplier email thread is hijacked and bank details swapped, and with romance and investment scams. Legitimate explanations: a genuine one-off large purchase, a new landlord, a first payment to a new supplier. Ask how the customer obtained the account details and whether they verified them by voice.' },\n  { doc_id: 'fraud_layering_deposit_out', text: 'Layering. Money arrives and is moved straight out again with little or no time in the account, leaving a near-zero balance. The account is being used as a waypoint rather than as a place to hold money, which is the defining shape of money laundering and of a mule account. Legitimate explanations: a customer who receives their salary and immediately pays rent and bills, or a business sweeping receipts into a main account. Ask whether the inbound and outbound counterparties have any obvious relationship.' },\n  { doc_id: 'fraud_loan_immediate_exit', text: 'Loan taken and immediately moved out. A loan is disbursed and the funds leave the account within hours, usually to a single new destination. Associated with loan-stacking fraud and with coerced borrowing, where a victim is talked into taking a loan and passing it on. Legitimate explanations: the loan was taken for a specific purchase the customer was ready to make. Ask what the loan was for and whether the destination matches that stated purpose.' },\n  { doc_id: 'fraud_new_account_rapid_activity', text: 'Rapid activity on a very new account. Significant money movement within days of the account opening, before any normal usage pattern exists. Associated with mule accounts opened specifically to receive and forward stolen funds. Legitimate explanations: a customer who switched banks and is genuinely starting to use the new account. Ask whether the activity looks like someone living their life or like a single pass-through.' },\n  { doc_id: 'fraud_round_number_escalation', text: 'Round-number escalation. A sequence of round-figure transfers that grow in size, often starting with a small test payment. The test confirms the account works and is not being watched before the real attempt. Signs: an unusually small first transfer to a new destination, followed within hours or days by a much larger one to the same place. Legitimate explanations: a cautious customer deliberately testing a new payee before sending the full amount, which is genuinely good practice. The distinguishing question is whether the customer knows they made the small payment.' },\n  { doc_id: 'fraud_repeated_failures_then_success', text: 'Repeated failures then a success. Several transfers rejected for insufficient funds, a frozen account, or a failed check, followed by a successful one. Someone probing for the limit of what will go through. Legitimate explanations: a customer genuinely miscalculating their balance and retrying after a deposit lands. Ask whether the successful amount was sized to sit just under a threshold.' },\n  { doc_id: 'fraud_dormant_reactivation', text: 'Dormant account reactivation. An account with little or no activity for a long period suddenly moves money. Dormant accounts are attractive precisely because nobody is watching them and the owner may not notice for months. Legitimate explanations: a savings account being used for its intended purpose, or a customer returning from abroad. Ask whether the contact details on the account changed shortly before the activity.' },\n  { doc_id: 'fraud_guardian_account_misuse', text: 'Misuse of a guardian-supervised account. Unusual outbound activity on an account held by a minor. Only the guardian can move money out, so unexpected outbound activity means either the guardian is misusing funds held for a child or the guardian mailbox is compromised. Legitimate explanations: the guardian genuinely spending on the child behalf. Treat with particular care: the account holder here cannot advocate for themselves.' }\n];\n\nreturn patterns.map(p => ({ json: { doc_id: p.doc_id, text: p.text } }));"
+      }
+    },
+    {
+      "id": "94d51153-96eb-480b-9e13-7525839483d6",
+      "name": "Seed Fraud Pattern Index",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        620,
+        1400
+      ],
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "mode": "id",
+          "value": "banking-policy-index"
+        },
+        "embeddingBatchSize": 200,
+        "options": {
+          "pineconeNamespace": "fraud_patterns"
+        }
+      },
+      "credentials": {
+        "pineconeApi": {
+          "id": "5T49ZfPpkS1OzAm0",
+          "name": "Pinecone account"
+        }
+      },
+      "notes": "Separate namespace from banking_policy. A fraud typology must never be retrievable by the customer-facing policy assistant - it would be both wrong and a disclosure of how detection works."
+    },
+    {
+      "id": "2dd85cd4-4da7-42cc-925b-c73461e98ff7",
+      "name": "Fraud Pattern Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        1600
+      ],
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.text }}",
+        "textSplittingMode": "simple",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "doc_id",
+                "value": "={{ $json.doc_id }}"
+              },
+              {
+                "name": "kind",
+                "value": "fraud_pattern"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "s11d-0001-4aaa-b001-cccccccccc01",
+      "name": "Seed Session 11 Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        60
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 5
+            }
+          ]
+        }
+      },
+      "notes": "One-time seed, run by hand. The schedule is only so it is not orphaned."
+    },
+    {
+      "id": "s11d-0002-4aaa-b002-cccccccccc02",
+      "name": "Policy Documents (Session 11 Additions)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        60
+      ],
+      "parameters": {
+        "jsCode": "// Five documents covering features built in Session 11. The live index was\n// silent on all of them, which meant a customer asking \"do you pay interest?\"\n// got routed to a human rather than answered -- the safe failure, but a useless\n// one when the answer is published policy.\n//\n// Additive only: none of these contradict an existing snippet.\nconst docs = [\n  {\n    doc_id: 'doc_savings_interest',\n    text: 'Savings Interest Policy: Digital Bank pays interest on savings accounts at 5.00% per annum. Checking and business accounts earn 0%. Interest is calculated monthly at one twelfth of the annual rate, applied to the closing balance of the month, and credited to the account automatically -- customers do not need to ask for it or claim it. Interest is only ever paid for a month that has fully ended; a month still in progress is never paid as though it were complete. Amounts are rounded down to the whole paisa, so the bank never pays a fraction of a paisa it did not compute. Each month is paid exactly once: the calculation can safely be re-run without paying twice, and equally without skipping a month if a scheduled run is missed. Interest is paid out of the bank treasury account through the same double-entry mechanism as any other movement of money, so it appears on the customer statement as a normal credit describing the month it covers, and it is included in the nightly reconciliation. If a balance is small enough that one month of interest rounds to less than one paisa, nothing is credited that month.'\n  },\n  {\n    doc_id: 'doc_statements',\n    text: 'Account Statement Policy: Customers can request an account statement by email at any time and it is produced and sent automatically, with no human step. The default period is the last full calendar month. A customer can instead ask for this month (month to date), this year (year to date), or an explicit date range such as statement from 2026-08-01 to 2026-08-31. If a customer holds more than one account and does not say which one they mean, Digital Bank asks rather than guessing. A statement shows the opening balance, total money in, total money out, the closing balance, and every individual transaction with the running balance after it, plus any outstanding debt on the account. The figures are rebuilt from the ledger itself rather than from any cached running total, so a statement is reconstructable from the ledger alone. Before a statement is sent, the system verifies that it adds up -- opening balance plus money in, minus money out, must equal the closing balance. If it does not, the statement is not sent and the operations team is alerted instead. Customers who see a transaction they do not recognise on a statement can reply and a dispute will be opened.'\n  },\n  {\n    doc_id: 'doc_dispute_process',\n    text: 'Dispute Process Policy: A customer who sees a transaction they did not make should email Digital Bank describing what they are disputing and roughly when it happened, including the transaction reference from their statement if they can find it. The customer immediately receives a dispute reference beginning DSP-. Every dispute is decided by a human specialist; there is no automated dispute resolution, because whether a person actually authorised a payment is not a judgement a machine should make alone. On a joint account the rule about who gets a say is explicit: raising a dispute is unilateral, so any single holder can raise one without the other holders permission, because reporting suspected fraud should never wait on someone else replying. Every other holder is then asked for their side and can agree or disagree with a comment. Neither answer decides the dispute by itself; the specialist decides with all the holder positions in front of them. If a dispute is upheld and a specific transaction was identified, that transaction is reversed. Disputes are typically reviewed within 3 to 5 business days.'\n  },\n  {\n    doc_id: 'doc_reversals_and_debt',\n    text: 'Reversal and Debt Policy: Digital Bank has no self-service undo on a completed transfer, and no automated process reverses one. A completed transfer is only ever reversed by a human decision -- either a dispute that a specialist upholds, or a reversal an operator authorises directly. When a reversal is approved, the bank takes back whatever the recipient still holds and returns it to the sender, using the same double-entry mechanism as any transfer. If the recipient has already spent some or all of the money, the bank recovers what is available and records the remainder as a debt owed by the recipient to the bank. A customer balance is never pushed below zero: a shortfall is tracked as a separate debt, not as a negative balance. Outstanding debt is then collected automatically from money the recipient receives afterwards, in instalments if necessary, until it is cleared. Because of this, a reversal may return money to the sender in stages rather than all at once, and the sender is told what was recovered immediately versus what is still being collected. Outstanding debt on an account is shown on statements and is disclosed to anyone being asked to join that account as a holder.'\n  },\n  {\n    doc_id: 'doc_holder_changes',\n    text: 'Adding and Removing Account Holders Policy: A holder can be added to an existing joint account, and a holder can be removed from one. Both require recorded consent, collected by emailing each person a reference code beginning JNT- that they answer by replying APPROVE or REJECT. Adding a holder requires every existing holder to approve, and it also requires the person being added to accept -- joint liability is not something other people can sign someone up for. The invitation to join discloses everything the incoming holder would be taking on, including any active hold on the account, any outstanding loan balance, and any unpaid debt. Removing a holder requires every holder to agree, including the person being removed: nobody can be taken off an account they are liable for without agreeing, and nobody can walk away from one unilaterally. A removal is refused outright in three situations, and the reason is always stated: when the account has an outstanding loan or an active hold, because the set of people answerable for a debt cannot be reduced while the debt exists; when removal would leave the account with no holders at all, in which case the account should be closed instead; and when it would remove the guardian from an account a minor still holds. Removal does not divide or reallocate any share of a balance, hold or standing order. Separately, the transfer mandate (either-or versus all-signatures) and the closure rule (unanimous versus majority) can both be changed after an account is opened, by unanimous agreement of all holders. Majority closure is only available on accounts with three or more holders, because with two holders a majority is both of them, which is what unanimous already means.'\n  }\n];\n\nreturn docs.map(d => ({ json: { doc_id: d.doc_id, text: d.text } }));"
+      }
+    },
+    {
+      "id": "s11d-0003-4aaa-b003-cccccccccc03",
+      "name": "Seed Session 11 Policy Docs",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        900,
+        60
+      ],
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "mode": "id",
+          "value": "banking-policy-index"
+        },
+        "embeddingBatchSize": 200,
+        "options": {
+          "pineconeNamespace": "banking_policy"
+        }
+      },
+      "credentials": {
+        "pineconeApi": {
+          "id": "5T49ZfPpkS1OzAm0",
+          "name": "Pinecone account"
+        }
+      },
+      "notes": "Seeds into the LIVE namespace, unlike the Drive branch. Safe because these five documents cover subjects the index was silent on rather than restating anything already there, so they cannot contradict an existing chunk."
+    },
+    {
+      "id": "s11d-0004-4aaa-b004-cccccccccc04",
+      "name": "Session 11 Document Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        60
+      ],
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.text }}",
+        "textSplittingMode": "simple",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "doc_id",
+                "value": "={{ $json.doc_id }}"
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "connections": {
@@ -374,6 +558,16 @@
           },
           {
             "node": "Seed Policy Docs From Drive",
+            "type": "ai_embedding",
+            "index": 0
+          },
+          {
+            "node": "Seed Fraud Pattern Index",
+            "type": "ai_embedding",
+            "index": 0
+          },
+          {
+            "node": "Seed Session 11 Policy Docs",
             "type": "ai_embedding",
             "index": 0
           }
@@ -505,6 +699,72 @@
           }
         ]
       ]
+    },
+    "Seed Fraud Patterns Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fraud Pattern Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fraud Pattern Documents": {
+      "main": [
+        [
+          {
+            "node": "Seed Fraud Pattern Index",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fraud Pattern Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Seed Fraud Pattern Index",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seed Session 11 Trigger": {
+      "main": [
+        [
+          {
+            "node": "Policy Documents (Session 11 Additions)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy Documents (Session 11 Additions)": {
+      "main": [
+        [
+          {
+            "node": "Seed Session 11 Policy Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Session 11 Document Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Seed Session 11 Policy Docs",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -512,7 +772,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "28c2010c-4b9d-4c2a-beee-a71ddc9c2ebb",
+  "versionId": "e59168cf-2cb7-4ba2-b0fb-da2481cc71c2",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

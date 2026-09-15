@@ -269,6 +269,44 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "s11-0001-4aaa-9001-aaaaaaaaaaa1",
+      "name": "Split Affected Holders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// One item per holder of the SOURCE account, so each gets their own email.\n// The RPC now returns this list precisely so the customer can be told; before,\n// the failure path knew only that something failed and who to alert internally.\nconst r = $('Permanent Failure?').first().json;\nconst emails = Array.isArray(r.holder_emails) ? r.holder_emails : [];\n\nconst amount = Number(r.amount || 0);\nreturn emails.filter(Boolean).map(email => ({ json: {\n  holderEmail: email,\n  standing_order_id: r.standing_order_id,\n  amount, amountFormatted: 'Rs ' + (amount / 100).toFixed(2),\n  frequency: r.frequency || 'recurring',\n  source_account_number: r.source_account_number,\n  destination_account_number: r.destination_account_number,\n  is_loan_repayment: Boolean(r.loan_repayment),\n  error: r.error || 'the payment could not be completed',\n  retry_count: r.retry_count || 3\n} }));"
+      }
+    },
+    {
+      "id": "s11-0002-4aaa-9002-aaaaaaaaaaa2",
+      "name": "Email Customer - Standing Order Stopped",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1780,
+        460
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.holderEmail }}",
+        "subject": "=Your recurring payment of {{ $json.amountFormatted }} has stopped",
+        "emailType": "text",
+        "message": "=Hello,\n\nWe need to let you know that a recurring payment from your account has now stopped. We tried {{ $json.retry_count }} times and it did not go through, so we have cancelled it rather than keep retrying indefinitely.\n\nAmount: {{ $json.amountFormatted }}\nFrom: {{ $json.source_account_number }}\nTo: {{ $json.destination_account_number }}\nSchedule: {{ $json.frequency }}\nWhy it failed: {{ $json.error }}\n\nThe most common cause is not enough money in the account on the day the payment was due.\n\n{{ $json.is_loan_repayment ? 'IMPORTANT: this was your loan repayment. Your loan is still outstanding and has NOT been written off. Please reply to this email so we can arrange how you want to repay it - the sooner the better.' : 'WHAT TO DO NEXT\\nIf you still want this payment to happen, top the account up and reply to this email asking us to set it up again. If you meant to stop it, you do not need to do anything.' }}\n\nNo money has left your account for this payment.\n\nDigital Bank Payments",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -352,6 +390,11 @@
             "node": "Format Permanent Failure Alert",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Split Affected Holders",
+            "type": "main",
+            "index": 0
           }
         ],
         [
@@ -384,6 +427,28 @@
           }
         ]
       ]
+    },
+    "Split Affected Holders": {
+      "main": [
+        [
+          {
+            "node": "Email Customer - Standing Order Stopped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Customer - Standing Order Stopped": {
+      "main": [
+        [
+          {
+            "node": "Process Orders One By One",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -391,7 +456,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "0bda3061-87e6-4ac4-94ad-2a2efa23ada5",
+  "versionId": "0ffd0061-7eab-4d9d-9d0c-ea434e82af91",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

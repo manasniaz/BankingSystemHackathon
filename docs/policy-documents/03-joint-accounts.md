@@ -58,7 +58,17 @@ On an all-signatures account, a requested transfer moves **no money immediately*
 
 Adding a holder to an existing account is supported, and requires the consent of the existing holders. If the account has an active hold on it, adding a holder additionally requires an explicit acknowledgement of that hold — you should not be able to join yourself to an encumbered account without being told it is encumbered.
 
-**Removing a holder from an account that stays open is not supported.** It raises questions this system does not answer — who inherits the departing holder's share of any hold or standing order, and what happens to their liability — and we would rather refuse it than implement a guess. The supported route is to close the account (see below) and open a new one.
+**Removing a holder is supported, and needs everyone's agreement — including the person being removed.** You cannot be taken off an account you are liable for without agreeing to it, and you cannot walk away from one unilaterally either. Everyone holding the account replies `APPROVE` to a `JNT-` code, exactly as with any other joint action.
+
+We refuse a removal outright in three cases, and tell you which one applies:
+
+- **The account has an outstanding loan or an active hold.** You cannot reduce the set of people answerable for a debt while the debt exists. Settle it first.
+- **It would leave the account with nobody on it.** Close the account instead.
+- **It would remove the guardian from an account a minor still holds**, leaving a child holding an account they are not permitted to operate.
+
+Removal does not attempt to divide anything up — no share of a balance, a hold or a standing order is reallocated. That is why we refuse it while the account is encumbered rather than guessing at a split.
+
+**Changing the mandate later.** The transfer mandate and the closure rule can both be changed after the account is open, by unanimous agreement of all holders. Majority closure is only offered on accounts with three or more holders; with two, a majority is both of you, which is what unanimous already means.
 
 ## 5. Closing a joint account
 
@@ -77,4 +87,10 @@ A single `REJECT` stops it. If nobody replies within 7 days the request expires 
 
 ## 6. Disputes on a joint account
 
-A dispute raised on a joint account is investigated by a human specialist, exactly like any other dispute. We do not have an automated rule for whether one holder can dispute a transaction another holder made — that is precisely the kind of judgement call a person should make with both holders' accounts in front of them.
+Every dispute is investigated and decided by a human specialist. But there is a clear rule about **who gets a say**, because on a joint account that question matters:
+
+- **Raising a dispute is unilateral.** Any single holder can raise one without waiting for the others. We will not make you ask permission to report suspected fraud — that would gate the fastest way to stop money leaving behind someone who might be asleep, unreachable, or the problem itself.
+- **Every other holder is asked for their side.** They receive the detail and reply with whether they agree, plus anything they want to add. If one of them made and authorised the transaction, that is exactly what we need to hear.
+- **Neither answer decides it.** The specialist sees every holder's position and makes the call. A dispute one holder raises against a transaction another holder made is precisely the case a person should judge, not a rule.
+
+If the dispute is upheld and a specific transaction was identified, that transaction is reversed — see the Payments policy for what happens when the money has already been spent.

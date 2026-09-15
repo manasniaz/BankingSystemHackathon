@@ -80,7 +80,22 @@ You are told, and you are told why. You are welcome to apply again later. A decl
 
 ## 4. Interest on deposits
 
-Digital Bank does not currently pay interest on checking or savings balances. There is no interest-bearing product, and no rate schedule. Interest applies only to loans, as the cost of borrowing.
+| Account type | Annual rate |
+|---|---|
+| **Savings** | **5.00%** |
+| Checking | 0% |
+| Business | 0% |
+
+Interest on a savings account is calculated monthly at one twelfth of the annual rate, applied to the closing balance of the month, and credited automatically. You do not need to ask for it or claim it.
+
+**Detail worth knowing:**
+
+- Interest is only ever paid for a month that has **fully ended**. A month in progress is never paid as though it were complete.
+- Amounts are rounded **down** to the whole paisa. We never pay a fraction of a paisa we did not actually compute.
+- Each month is paid exactly once. Our systems can safely re-run the calculation without paying you twice, and equally without skipping a month if a run is missed.
+- Interest appears on your statement as a normal credit, from the bank, described as the month it covers.
+
+If your balance is small enough that a month of interest rounds to less than one paisa, nothing is credited that month.
 
 ## 5. Overdrafts
 

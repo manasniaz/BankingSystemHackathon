@@ -176,9 +176,9 @@
     {
       "parameters": {
         "sendTo": "ops-team@yourbank.example",
-        "subject": "=[{{ $json.ref_code }}] FRAUD HOLD placed - account frozen, review needed",
+        "subject": "=[{{ $('Raise Hold Release Ops Approval').item.json.ref_code }}] FRAUD HOLD placed - account frozen, review needed",
         "emailType": "text",
-        "message": "=A transfer scored above the fraud threshold, so the account has been frozen automatically and no money moved.\n\nAccount ID: {{ $('Validate Request Payload').item.json.params.account_id }}\nAmount attempted: Rs {{ ($('Validate Request Payload').item.json.params.amount / 100).toFixed(2) }}\nRisk score: {{ $('Validate & Evaluate Fraud Decision').item.json.risk_score }} (threshold 75)\nDecision: {{ $('Validate & Evaluate Fraud Decision').item.json.decision }}\nReason: {{ $('Validate & Evaluate Fraud Decision').item.json.reason }}\n\nThe customer cannot clear this themselves - by design, only a human can.\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE   - this was a legitimate transaction; release the freeze\nor\n    REJECT    - genuinely suspicious; leave the account frozen\n\nOptionally add a line starting with NOTE: to record what you found.\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ref_code }}\nTYPE: fraud_hold_release\n========================",
+        "message": "=A transfer scored above the fraud threshold, so the account has been frozen automatically and no money moved.\n\nAccount ID: {{ $('Validate Request Payload').item.json.params.account_id }}\nAmount attempted: Rs {{ ($('Validate Request Payload').item.json.params.amount / 100).toFixed(2) }}\nRisk score: {{ $('Validate & Evaluate Fraud Decision').item.json.risk_score }} (threshold 75)\nDecision: {{ $('Validate & Evaluate Fraud Decision').item.json.decision }}\nReason: {{ $('Validate & Evaluate Fraud Decision').item.json.reason }}\n\nThe customer cannot clear this themselves - by design, only a human can.\n\nSIMILAR KNOWN PATTERNS (advisory - matched by similarity, NOT part of the score)\nThe freeze itself was decided by the deterministic rules above. The following is\nbackground to help you judge, including the innocent explanations. It is not\nevidence and it did not influence the decision to freeze.\n\n{{ $json.pattern_block }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE   - this was a legitimate transaction; release the freeze\nor\n    REJECT    - genuinely suspicious; leave the account frozen\n\nOptionally add a line starting with NOTE: to record what you found.\n\nKeep the reference {{ $('Raise Hold Release Ops Approval').item.json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $('Raise Hold Release Ops Approval').item.json.ref_code }}\nTYPE: fraud_hold_release\n========================",
         "options": {
           "appendAttribution": false
         }
@@ -286,6 +286,83 @@
           "name": "Supabase account"
         }
       }
+    },
+    {
+      "id": "s11-0003-4aaa-9003-aaaaaaaaaaa3",
+      "name": "Describe Transaction Shape",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        180
+      ],
+      "parameters": {
+        "jsCode": "// Turn the numbers into the kind of sentence an investigator would write, so\n// that a semantic search against the fraud-pattern index actually matches on\n// behaviour rather than on digits. Embeddings do nothing useful with \"amount:\n// 75000000\"; they do a lot with \"a very large transfer to a destination never\n// paid before\".\nconst v = $('Validate & Evaluate Fraud Decision').first().json;\nconst p = $('Validate Request Payload').first().json.params || {};\nconst ctx = p.transaction_context || {};\n\nconst amount = Number(p.amount || 0);\nconst rupees = amount / 100;\nconst parts = [];\n\nif (rupees >= 500000) parts.push('a very large transfer of Rs ' + rupees.toFixed(2));\nelse if (rupees >= 100000) parts.push('a large transfer of Rs ' + rupees.toFixed(2));\nelse parts.push('a transfer of Rs ' + rupees.toFixed(2));\n\nconst reason = String(v.reason || '').toLowerCase();\nif (reason.includes('velocity') || reason.includes('transactions in')) {\n  parts.push('one of many transfers from this account in a short window');\n}\nif (reason.includes('new recipient') || reason.includes('never')) {\n  parts.push('sent to a destination account that has never been paid before');\n}\nif (reason.includes('frozen') || reason.includes('hold')) {\n  parts.push('attempted on an account that already had a hold on it');\n}\nif (ctx.joint_action_ref) {\n  parts.push('on a joint account requiring all holders to sign');\n}\n\nparts.push('risk score ' + (v.risk_score || 0) + ' out of 100');\n\nreturn [{ json: {\n  query: parts.join(', ') + '. What known fraud pattern does this resemble?',\n  risk_score: v.risk_score,\n  reason: v.reason\n} }];"
+      }
+    },
+    {
+      "id": "s11-0004-4aaa-9004-aaaaaaaaaaa4",
+      "name": "Search Fraud Patterns",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        1800,
+        180
+      ],
+      "parameters": {
+        "mode": "load",
+        "pineconeIndex": {
+          "__rl": true,
+          "mode": "id",
+          "value": "banking-policy-index"
+        },
+        "prompt": "={{ $json.query }}",
+        "topK": 3,
+        "includeDocumentMetadata": true,
+        "options": {
+          "pineconeNamespace": "fraud_patterns"
+        }
+      },
+      "credentials": {
+        "pineconeApi": {
+          "id": "5T49ZfPpkS1OzAm0",
+          "name": "Pinecone account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Queries the fraud_patterns namespace, never banking_policy. Set to continue on error on purpose: if the vector lookup is unavailable the ops alert must still go out. A missing advisory note is an inconvenience; a fraud freeze nobody is told about is a real problem."
+    },
+    {
+      "id": "s11-0005-4aaa-9005-aaaaaaaaaaa5",
+      "name": "Fraud Pattern Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1860,
+        380
+      ],
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "XUIXSrkzGKEEyyXp",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "id": "s11-0006-4aaa-9006-aaaaaaaaaaa6",
+      "name": "Summarize Matched Patterns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        180
+      ],
+      "parameters": {
+        "jsCode": "// Collapse the retrieved patterns into a block the ops alert can paste in.\n// Runs once for all matches, and degrades to a plain note rather than failing\n// if the lookup returned nothing.\nconst items = $input.all().map(i => i.json).filter(Boolean);\n\nconst texts = [];\nfor (const it of items) {\n  const doc = it.document || it;\n  const content = doc.pageContent || doc.text || '';\n  const meta = doc.metadata || {};\n  if (content) {\n    texts.push({ doc_id: meta.doc_id || 'pattern', content: String(content).trim() });\n  }\n}\n\nlet block;\nif (texts.length === 0) {\n  block = 'No matching pattern was retrieved. Assess this one on the transaction detail above.';\n} else {\n  block = texts.map((t, i) =>\n    (i + 1) + '. [' + t.doc_id + ']\\n' + t.content\n  ).join('\\n\\n');\n}\n\nreturn [{ json: {\n  pattern_block: block,\n  pattern_count: texts.length,\n  matched_doc_ids: texts.map(t => t.doc_id).join(', ') || 'none'\n} }];"
+      }
     }
   ],
   "connections": {
@@ -388,8 +465,52 @@
       "main": [
         [
           {
+            "node": "Describe Transaction Shape",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Describe Transaction Shape": {
+      "main": [
+        [
+          {
+            "node": "Search Fraud Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Fraud Patterns": {
+      "main": [
+        [
+          {
+            "node": "Summarize Matched Patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Matched Patterns": {
+      "main": [
+        [
+          {
             "node": "Email Ops - Fraud Hold Placed Alert",
             "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fraud Pattern Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Search Fraud Patterns",
+            "type": "ai_embedding",
             "index": 0
           }
         ]
@@ -401,7 +522,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "4fade5a4-6758-4f89-8c1b-a388b915ea8a",
+  "versionId": "f22d3d39-f7a1-4bb4-a1b5-9b2e59660db1",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

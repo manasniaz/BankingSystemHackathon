@@ -428,6 +428,30 @@
               },
               "renameOutput": true,
               "outputKey": "Account Closure"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-statement",
+                    "leftValue": "={{ $json.intent }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "STATEMENT"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Statement"
             }
           ]
         },
@@ -892,10 +916,10 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $json.fromEmail }}",
-        "subject": "=RE: {{ $json.subject }} - Dispute Received",
+        "sendTo": "={{ $('Resolve Dispute Request').item.json.fromEmail }}",
+        "subject": "=[{{ $json.ref_code }}] We have opened a dispute for you",
         "emailType": "text",
-        "message": "=Hello {{ $json.full_name }},\n\nWe have received your dispute notification and it has been logged for review by our fraud and disputes team.\n\nA specialist will review your case and respond within 3-5 business days.\n\nTo help us investigate, please reply with:\n- The date of the transaction\n- The amount\n- The merchant or recipient name\n\nIf you believe your account security is compromised, contact us immediately.\n\nDigital Bank Disputes Team",
+        "message": "=Hello {{ $('Resolve Dispute Request').item.json.full_name }},\n\nWe have opened a formal dispute and a specialist will investigate it personally.\n\nYour dispute reference: {{ $json.ref_code }}\nAccount: {{ $json.account_number }}\n{{ $json.disputed_amount ? 'Amount: Rs ' + ($json.disputed_amount / 100).toFixed(2) : 'You did not identify a specific transaction. If you can find the transaction reference on your statement, reply with it and we will attach it to this dispute.' }}\n\n{{ $json.is_joint_account ? 'Because this is a joint account, we have also asked the other ' + ($json.holder_count - 1) + ' holder(s) for their side. You did not need their permission to raise this - but we do not decide it on one account holder-s word alone either.' : '' }}\n\nWHAT HAPPENS NOW\nA specialist reviews the dispute and everything we have. There is no automated decision here - a person decides. If the dispute is upheld and we can identify the transaction, we reverse it and recover the money.\n\nWe will email you the outcome. If anything else comes to mind in the meantime, just reply to this email.\n\nDigital Bank Disputes Team",
         "options": {
           "appendAttribution": false
         }
@@ -2407,7 +2431,7 @@
         "promptType": "define",
         "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
         "options": {
-          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, ACCOUNT_CLOSURE, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- ACCOUNT_CLOSURE: wanting an existing account closed, deleted, cancelled, deactivated or terminated. Trigger words: close my account, delete my account, I want out, shut down my account. If they are ASKING what the closure rules are rather than requesting it, that is POLICY_RAG. If they want their money moved somewhere first, that is TRANSFER.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own balance/statement. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
+          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, ACCOUNT_CLOSURE, STATEMENT, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- ACCOUNT_CLOSURE: wanting an existing account closed, deleted, cancelled, deactivated or terminated. If they are ASKING what the closure rules are rather than requesting it, that is POLICY_RAG. If they want their money moved somewhere first, that is TRANSFER.\n- STATEMENT: wanting a statement, transaction history, or a list of past activity on their account. BALANCE is just the current number; STATEMENT is the history.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card, I do not recognise this payment.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own current balance. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
         }
       },
       "id": "5a40c985-2eb2-4b17-b131-75309b5b291b",
@@ -2538,7 +2562,7 @@
         -200
       ],
       "parameters": {
-        "jsCode": "// Every email the bank sends that needs a human answer carries a short reference\n// code. When that human replies, the code comes back to us and tells us exactly\n// which pending decision this is. Three families:\n//   OPS-xxxxxxxx  a bank decision, only the ops mailbox may answer it\n//   JNT-xxxxxxxx  a joint-account action, only a holder may answer it (checked in SQL)\n//   MIN-xxxxxxxx  a guardian consent, only the named guardian may answer it (checked in SQL)\n\nconst OPS_TEAM_EMAIL = 'ops-team@yourbank.example';\n\nconst meta = $input.first().json;\nconst from = String(meta.fromEmail || '').toLowerCase().trim();\nconst subject = String(meta.subject || '');\nconst body = String(meta.bodyText || '');\n\nconst passthrough = Object.assign({}, meta, {\n  isRefReply: false,\n  refKind: null,\n  refCode: null,\n  decision: null,\n  opsNote: null,\n  opsTeamEmail: OPS_TEAM_EMAIL\n});\n\nconst refMatch = (subject + '\\n' + body).match(/\\b(OPS|JNT|MIN)-([A-Za-z0-9]{8})\\b/);\nif (!refMatch) {\n  return [{ json: passthrough }];\n}\n\nconst prefix = refMatch[1].toUpperCase();\nconst refCode = prefix + '-' + refMatch[2].toUpperCase();\nlet refKind = prefix === 'OPS' ? 'ops' : (prefix === 'JNT' ? 'joint' : 'minor');\n\n// An OPS code is only actionable when it comes from the ops mailbox itself.\n// Anyone else quoting the code back at us is just a normal customer email.\nif (refKind === 'ops' && from !== OPS_TEAM_EMAIL) {\n  return [{ json: passthrough }];\n}\n\n// Gmail quotes the original message in a reply, so the decision must be read from\n// what the person actually typed -- everything above the first quote marker.\nlet ownText = body;\nconst cutMarkers = [/^\\s*On .+wrote:\\s*$/m, /^\\s*>/m, /^-{2,}\\s*Original Message/im, /^\\s*_{10,}\\s*$/m, /^\\s*={3,}BANKING-OPS-ACTION/m];\nfor (const marker of cutMarkers) {\n  const hit = ownText.match(marker);\n  if (hit && hit.index !== undefined && hit.index >= 0) ownText = ownText.slice(0, hit.index);\n}\n\n// An explicit NOTE: line lets ops attach a rejection reason or an edited answer.\nlet opsNote = null;\nconst noteMatch = ownText.match(/^\\s*NOTE\\s*:\\s*([\\s\\S]+)$/im);\nif (noteMatch) {\n  opsNote = noteMatch[1].trim() || null;\n  ownText = ownText.slice(0, noteMatch.index);\n}\n\nconst decisionText = (subject + '\\n' + ownText);\nconst saysApprove = /\\b(approve|approved|approves|accept|accepted|authorise|authorised|authorize|authorized|yes|agreed|confirm|confirmed)\\b/i.test(decisionText);\nconst saysReject  = /\\b(reject|rejected|rejects|decline|declined|deny|denied|refuse|refused|no|disagree)\\b/i.test(decisionText);\n\nlet decision = null;\nif (saysApprove && !saysReject) decision = 'approve';\nelse if (saysReject && !saysApprove) decision = 'reject';\n\n// Both words, or neither: we must NOT guess. Passing \"not approve\" through as a\n// rejection would silently kill a pending request because someone replied\n// \"no problem, thanks\". Route to a clarification email instead and leave the\n// request untouched and still pending.\nif (decision === null) {\n  refKind = 'unclear';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  isRefReply: true,\n  refKind,\n  refCode,\n  decision,\n  opsNote,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
+        "jsCode": "// Every email the bank sends that needs a human answer carries a short reference\n// code. When that human replies, the code comes back to us and tells us exactly\n// which pending decision this is. Four families:\n//   OPS-xxxxxxxx  a bank decision, only the ops mailbox may answer it\n//   JNT-xxxxxxxx  a joint-account action, only a holder (or, for an invitation\n//                 to join, the invited person) may answer it - checked in SQL\n//   MIN-xxxxxxxx  a guardian consent, only the named guardian may answer it\n//   DSP-xxxxxxxx  a dispute, co-holders adding their side of the story\n\nconst OPS_TEAM_EMAIL = 'ops-team@yourbank.example';\n\nconst meta = $input.first().json;\nconst from = String(meta.fromEmail || '').toLowerCase().trim();\nconst subject = String(meta.subject || '');\nconst body = String(meta.bodyText || '');\n\nconst passthrough = Object.assign({}, meta, {\n  isRefReply: false, refKind: null, refCode: null,\n  decision: null, opsNote: null, opsTeamEmail: OPS_TEAM_EMAIL\n});\n\nconst refMatch = (subject + '\\n' + body).match(/\\b(OPS|JNT|MIN|DSP)-([A-Za-z0-9]{8})\\b/);\nif (!refMatch) {\n  return [{ json: passthrough }];\n}\n\nconst prefix = refMatch[1].toUpperCase();\nconst refCode = prefix + '-' + refMatch[2].toUpperCase();\nlet refKind = prefix === 'OPS' ? 'ops'\n            : prefix === 'JNT' ? 'joint'\n            : prefix === 'MIN' ? 'minor'\n            : 'dispute';\n\n// An OPS code is only actionable when it comes from the ops mailbox itself.\n// Anyone else quoting the code back at us is just a normal customer email.\nif (refKind === 'ops' && from !== OPS_TEAM_EMAIL) {\n  return [{ json: passthrough }];\n}\n\n// Gmail quotes the original message in a reply, so the decision must be read from\n// what the person actually typed -- everything above the first quote marker.\nlet ownText = body;\nconst cutMarkers = [/^\\s*On .+wrote:\\s*$/m, /^\\s*>/m, /^-{2,}\\s*Original Message/im, /^\\s*_{10,}\\s*$/m, /^\\s*={3,}BANKING-OPS-ACTION/m];\nfor (const marker of cutMarkers) {\n  const hit = ownText.match(marker);\n  if (hit && hit.index !== undefined && hit.index >= 0) ownText = ownText.slice(0, hit.index);\n}\n\n// An explicit NOTE: line lets ops attach a rejection reason or an edited answer,\n// and lets a co-holder attach their side of a dispute.\nlet opsNote = null;\nconst noteMatch = ownText.match(/^\\s*NOTE\\s*:\\s*([\\s\\S]+)$/im);\nif (noteMatch) {\n  opsNote = noteMatch[1].trim() || null;\n  ownText = ownText.slice(0, noteMatch.index);\n}\n\nconst decisionText = (subject + '\\n' + ownText);\nconst saysApprove = /\\b(approve|approved|approves|accept|accepted|authorise|authorised|authorize|authorized|yes|agreed?|confirm|confirmed)\\b/i.test(decisionText);\nconst saysReject  = /\\b(reject|rejected|rejects|decline|declined|deny|denied|refuse|refused|no|disagreed?)\\b/i.test(decisionText);\n\nlet decision = null;\nif (saysApprove && !saysReject) decision = 'approve';\nelse if (saysReject && !saysApprove) decision = 'reject';\n\n// Both words, or neither: we must NOT guess. Passing \"not approve\" through as a\n// rejection would silently kill a pending request because someone replied\n// \"no problem, thanks\". Route to a clarification email instead and leave the\n// request untouched and still pending.\nif (decision === null) {\n  refKind = 'unclear';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  isRefReply: true, refKind, refCode, decision, opsNote,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
       }
     },
     {
@@ -2658,6 +2682,30 @@
               },
               "renameOutput": true,
               "outputKey": "Guardian Consent"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ref-dispute",
+                    "leftValue": "={{ $json.refKind }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "dispute"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Dispute Input"
             }
           ]
         },
@@ -4449,7 +4497,7 @@
     },
     {
       "id": "67220f39-ed1b-4987-b41b-cee725dc803c",
-      "name": "Detect Account Closure Intent",
+      "name": "Detect Late Intent Overrides",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -4457,7 +4505,7 @@
         1820
       ],
       "parameters": {
-        "jsCode": "// Closure is decided AFTER both classifier paths (keyword and LLM) have had\n// their say, so the rule lives in one place instead of being duplicated into\n// two 4KB classifiers that must be kept identical.\n//\n// It only ever promotes UNKNOWN. That is deliberate:\n//   \"what is your account closure policy\"  -> POLICY_RAG, they want an answer, not a closure\n//   \"close my account and send the balance to ACC-123\" -> TRANSFER, move the money first\n// Overriding either of those would do the customer real harm, so a confident\n// classification is never second-guessed here.\nconst item = $input.first().json;\nconst intent = String(item.intent || '');\n\nif (intent !== 'UNKNOWN') {\n  return [{ json: item }];\n}\n\nconst text = ((item.subject || '') + ' ' + (item.bodyText || '')).toLowerCase();\n\nconst closureVerb = /\\b(close|closing|closure|delete|deleting|deactivate|terminate|terminating|cancel|cancelling|canceling|shut\\s?down)\\b/.test(text);\nconst mentionsAccount = /\\b(account|acc|acct)\\b/.test(text);\n// \"cancel my standing order on that account\" is a standing-order request, not a\n// closure request, and the two share the verb 'cancel'.\nconst isStandingOrder = /\\b(standing order|recurring|scheduled payment|direct debit|subscription)\\b/.test(text);\n\nif (closureVerb && mentionsAccount && !isStandingOrder) {\n  return [{ json: Object.assign({}, item, { intent: 'ACCOUNT_CLOSURE' }) }];\n}\n\nreturn [{ json: item }];"
+        "jsCode": "// Late intent overrides, applied AFTER both classifier paths (keyword and LLM)\n// have had their say, so these rules live in one place instead of being\n// duplicated into two 4KB classifiers that must be kept identical.\n//\n// They only ever promote UNKNOWN. That is deliberate:\n//   \"what is your account closure policy\"  -> POLICY_RAG, they want an answer, not a closure\n//   \"close my account and send the balance to ACC-123\" -> TRANSFER, move the money first\n// Overriding either of those would do the customer real harm, so a confident\n// classification is never second-guessed here.\nconst item = $input.first().json;\nconst intent = String(item.intent || '');\n\nif (intent !== 'UNKNOWN') {\n  return [{ json: item }];\n}\n\nconst text = ((item.subject || '') + ' ' + (item.bodyText || '')).toLowerCase();\n\n// --- statements ------------------------------------------------------------\n// Checked before closure: \"send me a statement for the account I closed\" is a\n// statement request, not a closure request.\nconst wantsStatement = /\\b(statement|statements|transaction history|account history|list of transactions|activity report)\\b/.test(text);\nif (wantsStatement) {\n  return [{ json: Object.assign({}, item, { intent: 'STATEMENT' }) }];\n}\n\n// --- closure ---------------------------------------------------------------\nconst closureVerb = /\\b(close|closing|closure|delete|deleting|deactivate|terminate|terminating|cancel|cancelling|canceling|shut\\s?down)\\b/.test(text);\nconst mentionsAccount = /\\b(account|acc|acct)\\b/.test(text);\n// \"cancel my standing order on that account\" is a standing-order request, not a\n// closure request, and the two share the verb 'cancel'.\nconst isStandingOrder = /\\b(standing order|recurring|scheduled payment|direct debit|subscription)\\b/.test(text);\n\nif (closureVerb && mentionsAccount && !isStandingOrder) {\n  return [{ json: Object.assign({}, item, { intent: 'ACCOUNT_CLOSURE' }) }];\n}\n\nreturn [{ json: item }];"
       }
     },
     {
@@ -4672,6 +4720,616 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "c81af740-ab31-4540-bd0b-f876eb142be2",
+      "name": "Add Dispute Holder Input",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/add_dispute_holder_input",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $json.refCode, p_responder_email: $json.fromEmail, p_agrees: $json.decision === 'approve', p_comment: $json.opsNote }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "bf7bf58e-cb6f-4934-be8d-e020da3a1ca6",
+      "name": "Dispute Input Recorded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "dsp-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "23592a12-8c30-4a78-89e8-79160febdd3a",
+      "name": "Confirm Dispute Input Recorded",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1960,
+        440
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.fromEmail }}",
+        "subject": "=Thank you - your input on dispute {{ $json.ref_code }} is recorded",
+        "emailType": "text",
+        "message": "=Hello,\n\nWe have recorded your response to dispute {{ $json.ref_code }}.\n\nYou said you {{ $json.agrees ? 'AGREE' : 'DO NOT AGREE' }} with the dispute raised by {{ $json.raised_by_email }}.\n\nWe now have {{ $json.inputs_received }} of {{ $json.holders_total }} holders' input on this.\n\nA specialist reviews every dispute personally, and they will see what each of you said before deciding. Neither your agreement nor your disagreement decides it on its own - that is deliberate, because a dispute between joint holders is exactly the kind of thing a person should look at rather than a rule.\n\nWe will email you when there is a decision.\n\nDigital Bank Disputes Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "6cb61230-69bf-41df-a6fb-b85cd17e019b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "1d039f86-eeaa-4415-9b39-b61a13d0cce6",
+      "name": "Send Dispute Input Problem Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1960,
+        580
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.fromEmail }}",
+        "subject": "=We could not record your response - {{ $('Detect Reference Reply').item.json.refCode }}",
+        "emailType": "text",
+        "message": "=We could not record your response to dispute {{ $('Detect Reference Reply').item.json.refCode }}.\n\nReason: {{ $json.error }}\n\nTo respond, reply to the original email with the single word APPROVE (if you agree the transaction was not authorised) or REJECT (if you think it was legitimate), keeping the reference code in the message. You can add a line starting with NOTE: to tell us anything else.\n\nDigital Bank Disputes Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "15163844-9691-4050-aefd-cf80c515ca3a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "74fd0776-12eb-4bb8-a084-7a07bd32c5f9",
+      "name": "Is Invited Holder?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1820,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "is-invitee",
+              "leftValue": "={{ $json.is_invitee }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "caf8bc37-2f99-477e-9ce2-dcdf61513033",
+      "name": "Accept Holder Addition",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2100,
+        340
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/accept_holder_addition",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $('Detect Reference Reply').item.json.refCode, p_responder_email: $('Detect Reference Reply').item.json.fromEmail, p_accept: $('Detect Reference Reply').item.json.decision === 'approve' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "effc474d-09ff-483b-bc89-76ee59357820",
+      "name": "Send Holder Addition Outcome Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2380,
+        340
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.fromEmail }}",
+        "subject": "={{ $json.success === true && $json.accepted === true && $json.status === 'approved' ? 'You have been added to account ' + $json.account_number : ($json.accepted === false ? 'You declined to join account ' + $json.account_number : 'About joining account ' + ($json.account_number || '')) }}",
+        "emailType": "text",
+        "message": "=Hello,\n\n{{ $json.success === false\n   ? 'We could not record your answer. Reason: ' + $json.error\n   : ($json.accepted === false\n      ? 'You have declined to be added to account ' + $json.account_number + '. Nothing has changed and you are not a holder of that account. We have told ' + $json.requester_email + '.'\n      : ($json.status === 'approved'\n         ? 'You are now a joint holder of account ' + $json.account_number + '. You share full responsibility for this account, including anything owed on it, and you can now check the balance, receive money and transfer money out subject to the account mandate.'\n         : 'Thank you - your acceptance is recorded. We are still waiting on the other holders to approve before you are added.')) }}\n\nDigital Bank Joint Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "c8b32cea-43b9-40cc-bff8-d5f099301cbe",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "58bcf935-caa7-424f-87e9-318948454f73",
+      "name": "Resolve Statement Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        2100
+      ],
+      "parameters": {
+        "jsCode": "// Input is Route by Intent, which carries whichever classification won.\nconst ctx = $input.first().json;\nconst text = ((ctx.bodyText || '') + ' ' + (ctx.subject || ''));\nconst hay = text.toUpperCase();\nconst lower = text.toLowerCase();\nconst active = (ctx.authorizedAccounts || []).filter(a => a.status === 'active');\n\nfunction out(extra) {\n  return [{ json: Object.assign({\n    fromEmail: ctx.fromEmail, subject: ctx.subject,\n    full_name: ctx.full_name, profile_id: ctx.profile_id\n  }, extra) }];\n}\n\nif (active.length === 0) {\n  return out({ ok: false, reason: 'We could not find an open account in your name to produce a statement for.' });\n}\n\nlet target = null;\nconst mentioned = hay.match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nfor (const m of mentioned) {\n  const hit = active.find(a => String(a.account_number).toUpperCase() === m);\n  if (hit) { target = hit; break; }\n}\nif (!target) {\n  if (active.length === 1) {\n    target = active[0];\n  } else {\n    const list = active.map(a => '  ' + a.account_number + ' - ' + a.account_type).join('\\n');\n    return out({ ok: false, needsAccountChoice: true, accountList: list,\n      reason: 'You hold more than one open account, so we need to know which one the statement is for.' });\n  }\n}\n\n// Period. Default is the last full calendar month, which is what \"my statement\"\n// almost always means. \"This month\" is honoured explicitly because a\n// month-to-date statement is a reasonable and different thing to ask for.\nfunction iso(d) { return d.toISOString().slice(0, 10); }\nconst now = new Date();\nlet from, to, label;\n\nconst explicit = text.match(/\\b((?:19|20)\\d{2}-\\d{2}-\\d{2})\\b[^\\d]{1,12}\\b((?:19|20)\\d{2}-\\d{2}-\\d{2})\\b/);\nif (explicit) {\n  from = explicit[1]; to = explicit[2]; label = from + ' to ' + to;\n} else if (/\\b(this month|current month|month to date|so far this month)\\b/.test(lower)) {\n  from = iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));\n  to = iso(now);\n  label = 'this month so far';\n} else if (/\\b(this year|year to date)\\b/.test(lower)) {\n  from = iso(new Date(Date.UTC(now.getUTCFullYear(), 0, 1)));\n  to = iso(now);\n  label = 'this year so far';\n} else {\n  const firstOfThis = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));\n  const lastOfPrev = new Date(firstOfThis.getTime() - 86400000);\n  from = iso(new Date(Date.UTC(lastOfPrev.getUTCFullYear(), lastOfPrev.getUTCMonth(), 1)));\n  to = iso(lastOfPrev);\n  label = 'last month';\n}\n\nreturn out({ ok: true, account_id: target.account_id,\n  account_number: target.account_number, period_start: from, period_end: to,\n  period_label: label });"
+      }
+    },
+    {
+      "id": "74476e77-31ce-49c0-ade7-6f3c0fc59be8",
+      "name": "Statement Request Understood?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3640,
+        2100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "stmt-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a4c32c11-e79e-46dc-bc95-5b003b137152",
+      "name": "Generate Statement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3920,
+        2100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://' + ($vars.PYTHON_SERVICE_URL || 'bankingsystemhackathon-production.up.railway.app').replace(/^https?:\\/\\//, '') }}/generate-statement",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ account_id: $json.account_id, period_start: $json.period_start, period_end: $json.period_end }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        }
+      }
+    },
+    {
+      "id": "838294d3-029f-4b4d-9693-8eaffe3fcc67",
+      "name": "Statement Generated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4200,
+        2100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "stmt-gen",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "stmt-text",
+              "leftValue": "={{ $json.statement_text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "13801541-001e-43f7-9c9a-b8fdab9bd95e",
+      "name": "Send Statement Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4480,
+        2020
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Resolve Statement Request').item.json.fromEmail }}",
+        "subject": "=Your statement for {{ $('Resolve Statement Request').item.json.account_number }} - {{ $('Resolve Statement Request').item.json.period_label }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Resolve Statement Request').item.json.full_name }},\n\nHere is your statement for {{ $('Resolve Statement Request').item.json.period_label }}.\n\n{{ $json.statement_text }}\n\n{{ $json.balanced ? '' : 'Please note: our checks flagged an inconsistency in this statement and our team has been alerted. Please do not rely on these figures until we confirm them.\\n\\n' }}If you spot a transaction you do not recognise, reply to this email and tell us which one - we will open a dispute and a specialist will investigate.\n\nTo get a different period, reply with dates like \"statement from 2026-08-01 to 2026-08-31\".\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "35da5a2e-7e68-4cf7-b783-1a5d1441f7a4",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "12af147c-afa6-411b-b58c-bbb129cf8ea3",
+      "name": "Send Statement Problem Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4480,
+        2180
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Resolve Statement Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Resolve Statement Request').item.json.subject }} - about your statement",
+        "emailType": "text",
+        "message": "=Hello {{ $('Resolve Statement Request').item.json.full_name }},\n\nWe could not produce your statement just now. Our team has been notified and we will follow up.\n\nIn the meantime, reply to this email if you need a specific figure and we will get it for you directly.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "65050233-ac7e-4ba1-8eea-a063d6e39828",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "02a1e9d2-840d-4f38-b86c-e9f7fba81995",
+      "name": "Send Statement Clarification Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3920,
+        2260
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=RE: {{ $json.subject }} - which account?",
+        "emailType": "text",
+        "message": "=Hello {{ $json.full_name }},\n\n{{ $json.reason }}\n\n{{ $json.needsAccountChoice ? 'Your open accounts are:\\n' + $json.accountList + '\\n\\nJust reply with the account number, for example \"statement for ' + ($json.accountList || '').trim().split('\\n')[0].trim().split(' ')[0] + '\".' : 'Reply to this email and we will sort it out.' }}\n\nYou can also give us a period, like \"statement from 2026-08-01 to 2026-08-31\", or say \"this month\".\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "53086956-a41d-489a-9966-8b308bcdbde1",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "275e8af8-f9ce-475b-9dee-f7f8b23f4ad9",
+      "name": "Resolve Dispute Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        1400
+      ],
+      "parameters": {
+        "jsCode": "const ctx = $input.first().json;\nconst body = String(ctx.bodyText || '');\nconst hay = (body + ' ' + (ctx.subject || '')).toUpperCase();\nconst active = (ctx.authorizedAccounts || []).filter(a => a.status === 'active');\n\nfunction out(extra) {\n  return [{ json: Object.assign({\n    fromEmail: ctx.fromEmail, subject: ctx.subject,\n    full_name: ctx.full_name, profile_id: ctx.profile_id\n  }, extra) }];\n}\n\nif (active.length === 0) {\n  return out({ ok: false, reason: 'We could not find an open account in your name to raise a dispute against.' });\n}\n\nlet target = null;\nconst mentioned = hay.match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nfor (const m of mentioned) {\n  const hit = active.find(a => String(a.account_number).toUpperCase() === m);\n  if (hit) { target = hit; break; }\n}\n// Unlike closing an account, we do NOT stall a dispute waiting for the customer\n// to tell us which account. Reporting suspected fraud is time-critical; we take\n// the primary account, raise it, and a human sorts out the detail.\nif (!target) {\n  target = active.find(a => a.role === 'primary') || active[0];\n}\n\n// A transaction reference if they quoted one from a statement.\nconst uuid = body.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n\nreturn out({\n  ok: true,\n  account_id: target.account_id,\n  account_number: target.account_number,\n  transaction_id: uuid ? uuid[0] : null,\n  description: (body || ctx.subject || 'No detail supplied').slice(0, 1500)\n});"
+      }
+    },
+    {
+      "id": "e4f6c631-edd8-496b-be89-ac15f1027411",
+      "name": "Raise Dispute",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3640,
+        1400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/raise_dispute",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_profile_id: $json.profile_id, p_account_id: $json.account_id, p_transaction_id: $json.transaction_id, p_description: $json.description }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "a1d44a2a-f981-4c48-9152-1bb66b64f8c7",
+      "name": "Dispute Raised?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3920,
+        1400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "dsp-raised",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "51156113-1295-4b04-8b9e-ad4de77f8b9a",
+      "name": "Alert Ops - Dispute Raised",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4200,
+        1320
+      ],
+      "parameters": {
+        "sendTo": "ops-team@yourbank.example",
+        "subject": "=[{{ $json.ops_ref_code }}] Dispute {{ $json.ref_code }} on {{ $json.account_number }}",
+        "emailType": "text",
+        "message": "=A customer has raised a dispute. Every dispute is decided by a person - there is no automated resolution.\n\nDispute: {{ $json.ref_code }}\nAccount: {{ $json.account_number }}\nRaised by: {{ $json.raised_by_email }}\nTransaction: {{ $json.transaction_id || 'not specified - customer did not quote a reference' }}\nAmount: {{ $json.disputed_amount ? 'Rs ' + ($json.disputed_amount / 100).toFixed(2) : 'not specified' }}\n\n{{ $json.is_joint_account ? 'THIS IS A JOINT ACCOUNT with ' + $json.holder_count + ' holders. The other holders have been asked for their side and their responses are being collected against this dispute. Check them before deciding - one holder disputing a transaction another holder made is the case this process exists for.' : 'Single-holder account.' }}\n\nWHAT THEY SAID\n{{ $('Resolve Dispute Request').item.json.description }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE   - uphold the dispute. If a transaction was identified this REVERSES it, clawing back what it can and recording any shortfall as a debt.\nor\n    REJECT    - the transaction stands.\n\nAdd a line starting with NOTE: to record your reasoning; it is shown to the customer.\n\nKeep the reference {{ $json.ops_ref_code }} in the reply - it is already in the subject line. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ops_ref_code }}\nTYPE: dispute\n========================",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "f2ed1dbd-7437-4271-948f-2023e5214107",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "8a3b53f6-4069-4f55-994a-58993650b840",
+      "name": "Split Dispute Co-Holders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        1320
+      ],
+      "parameters": {
+        "jsCode": "// The joint-account dispute rule in practice: raising is unilateral, but every\n// other holder is asked for their side before a human decides. On a\n// single-holder account there is nobody to ask and this emits nothing.\nconst r = $('Raise Dispute').first().json;\nconst emails = Array.isArray(r.other_holder_emails) ? r.other_holder_emails : [];\n\nreturn emails.filter(Boolean).map(email => ({ json: {\n  holderEmail: email,\n  ref_code: r.ref_code,\n  account_number: r.account_number,\n  raised_by_email: r.raised_by_email,\n  disputed_amount: r.disputed_amount,\n  amountFormatted: r.disputed_amount ? 'Rs ' + (Number(r.disputed_amount) / 100).toFixed(2) : null,\n  transaction_id: r.transaction_id,\n  description: $('Resolve Dispute Request').first().json.description\n} }));"
+      }
+    },
+    {
+      "id": "29cf1d0a-8caa-4f16-a82d-f66be2e780dd",
+      "name": "Ask Co-Holder For Dispute Input",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4760,
+        1320
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.holderEmail }}",
+        "subject": "=[{{ $json.ref_code }}] {{ $json.raised_by_email }} has disputed activity on your joint account",
+        "emailType": "text",
+        "message": "=Hello,\n\n{{ $json.raised_by_email }}, who holds account {{ $json.account_number }} with you, has raised a dispute and we would like your side before a specialist decides.\n\nAccount: {{ $json.account_number }}\n{{ $json.amountFormatted ? 'Amount disputed: ' + $json.amountFormatted : 'They did not identify a specific transaction.' }}\n\nWHAT THEY TOLD US\n{{ $json.description }}\n\nWHY WE ARE ASKING YOU\nOn a joint account, either of you can raise a dispute on your own - we do not make someone wait for permission to report suspected fraud. But we do not decide it on one person's word either, so we ask everyone who holds the account.\n\nIf this was a transaction you made and authorised, say so - that is exactly the kind of thing we need to know.\n\nHOW TO ANSWER\nReply to this email with a single word on the first line:\n\n    APPROVE   - you agree this was not authorised\nor\n    REJECT    - you believe it was legitimate\n\nAdd a line starting with NOTE: to explain anything. Keep the reference {{ $json.ref_code }} in the reply - it is already in the subject line.\n\nNeither answer decides it by itself. A specialist reads everything and makes the call.\n\nDigital Bank Disputes Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "724356b4-526e-4e9f-b9fb-5ccedda82f86",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "e53b7c7d-d102-4f80-a2f4-61cf50cbce08",
+      "name": "Send Dispute Failed Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4200,
+        1480
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Resolve Dispute Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Resolve Dispute Request').item.json.subject }} - about your dispute",
+        "emailType": "text",
+        "message": "=Hello {{ $('Resolve Dispute Request').item.json.full_name }},\n\nWe could not open a formal dispute from your email.\n\nReason: {{ $json.error }}\n\nThis does not mean we are ignoring you. Reply to this email with as much detail as you can - the amount, roughly when it happened, and the account number - and a specialist will pick it up directly.\n\nIf you believe your account is at immediate risk, say so in your reply and we will prioritise it.\n\nDigital Bank Disputes Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "c255718b-4bbd-4739-a448-05ea10a7e230",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -4770,12 +5428,7 @@
         ],
         [
           {
-            "node": "Send General Inquiry Response Email",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Send Dispute Acknowledgement Email",
+            "node": "Resolve Dispute Request",
             "type": "main",
             "index": 0
           }
@@ -4811,6 +5464,13 @@
         [
           {
             "node": "Resolve Account Closure Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resolve Statement Request",
             "type": "main",
             "index": 0
           }
@@ -5474,7 +6134,7 @@
         ],
         [
           {
-            "node": "Detect Account Closure Intent",
+            "node": "Detect Late Intent Overrides",
             "type": "main",
             "index": 0
           }
@@ -5529,6 +6189,13 @@
         [
           {
             "node": "Respond To Guardian Consent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add Dispute Holder Input",
             "type": "main",
             "index": 0
           }
@@ -5861,7 +6528,7 @@
       "main": [
         [
           {
-            "node": "Joint Transfer Needs Fraud Check?",
+            "node": "Is Invited Holder?",
             "type": "main",
             "index": 0
           }
@@ -6083,18 +6750,7 @@
       "main": [
         [
           {
-            "node": "Detect Account Closure Intent",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Detect Account Closure Intent": {
-      "main": [
-        [
-          {
-            "node": "Route by Intent",
+            "node": "Detect Late Intent Overrides",
             "type": "main",
             "index": 0
           }
@@ -6169,6 +6825,206 @@
           }
         ]
       ]
+    },
+    "Is Invited Holder?": {
+      "main": [
+        [
+          {
+            "node": "Accept Holder Addition",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Joint Transfer Needs Fraud Check?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept Holder Addition": {
+      "main": [
+        [
+          {
+            "node": "Send Holder Addition Outcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Dispute Holder Input": {
+      "main": [
+        [
+          {
+            "node": "Dispute Input Recorded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispute Input Recorded?": {
+      "main": [
+        [
+          {
+            "node": "Confirm Dispute Input Recorded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Dispute Input Problem Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Late Intent Overrides": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Dispute Request": {
+      "main": [
+        [
+          {
+            "node": "Raise Dispute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Raise Dispute": {
+      "main": [
+        [
+          {
+            "node": "Dispute Raised?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispute Raised?": {
+      "main": [
+        [
+          {
+            "node": "Send Dispute Acknowledgement Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Dispute Failed Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Dispute Acknowledgement Email": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops - Dispute Raised",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Ops - Dispute Raised": {
+      "main": [
+        [
+          {
+            "node": "Split Dispute Co-Holders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Dispute Co-Holders": {
+      "main": [
+        [
+          {
+            "node": "Ask Co-Holder For Dispute Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Statement Request Understood?": {
+      "main": [
+        [
+          {
+            "node": "Generate Statement",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Statement Clarification Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Statement Request": {
+      "main": [
+        [
+          {
+            "node": "Statement Request Understood?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Statement": {
+      "main": [
+        [
+          {
+            "node": "Statement Generated?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Statement Generated?": {
+      "main": [
+        [
+          {
+            "node": "Send Statement Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Statement Problem Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -6176,7 +7032,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "bf21ee94-effd-47ff-ab2b-0708dde49f70",
+  "versionId": "3f682f0f-5534-435e-9d2b-f721c7a5ace8",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

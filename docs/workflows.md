@@ -118,3 +118,43 @@ The confirm-and-execute half needed no new code — `respond_to_joint_action_by_
 Adding a rule to an n8n Switch shifts its fallback output index. This project has now been bitten three times (Sessions 7, 9, 10). Rewiring connections and adding the rule are separate operations, and between them the fallback is mis-aimed — in this session's case, briefly routing every unclassified email in the bank into the account-closure flow. Run the rule-count-versus-connection-count audit after every switch change.
 
 Full root-cause writeup: `decisions.md` → "Session 10".
+
+## Session 11 changes (2026-09-15)
+
+Every one of the capstone brief's 32 items is now built. This session closed the last twelve gaps. Full reasoning in `decisions.md` → "Session 11".
+
+### New reference code
+
+| Prefix | Who may answer | Enforced by |
+|---|---|---|
+| `DSP-XXXXXXXX` | any holder of the disputed account | `add_dispute_holder_input()` in Postgres |
+
+Joins the existing `OPS-`, `JNT-` and `MIN-` families. An invited holder replying to a `JNT-` add-holder code is now routed to `accept_holder_addition()` rather than refused for not yet being a holder.
+
+### New and changed per workflow
+
+- **WF-00** (146 → 167 nodes).
+  - **`STATEMENT`** is a new intent. `Resolve Statement Request` picks the account and period (defaulting to last full month, understanding "this month", "this year" and explicit `YYYY-MM-DD to YYYY-MM-DD`), the Python service renders it, and it is emailed as readable text. Won't guess which account when the customer holds several.
+  - **`DISPUTE` is no longer an acknowledgement dead end.** It creates a tracked dispute with a `DSP-` reference, queues it for a human, and on a joint account emails every other holder for their side. This also fixed a latent bug: the DISPUTE branch fired **both** the generic could-not-process reply and the dispute acknowledgement, sending two contradictory emails.
+  - `Detect Late Intent Overrides` (renamed from `Detect Account Closure Intent`) now promotes `UNKNOWN` to `STATEMENT` as well as `ACCOUNT_CLOSURE`. It still never overrides a confident classification.
+  - Dispute-input branch: `Add Dispute Holder Input` → `Dispute Input Recorded?` → confirmation or problem email.
+  - `Route by Intent` gained rule 11 (`STATEMENT`); its fallback moved to output 12. `Route Reference Kind` gained rule 3 (`Dispute Input`); its fallback moved to output 4.
+- **WF-02**. On a permanently failed standing order, every holder of the source account is now emailed directly — what failed, why, and what to do — with distinct wording when it was a loan repayment. Previously only ops was told.
+- **WF-03**. The ops alert now carries the three most similar known fraud typologies, retrieved semantically, each with its innocent explanations. Advisory only and clearly labelled as such: the freeze decision remains the deterministic rules engine.
+- **WF-04**. Citation guardrail — an answer claiming to be grounded with zero citations is forced to human review whatever confidence it reports. Retrieval bounded to `topK` 4.
+- **WF-06**. Nightly run extended with `sweep_outstanding_debts()` and `accrue_monthly_interest()`, both idempotent.
+- **WF-09**. Third branch seeding ten fraud typologies into a separate `fraud_patterns` namespace.
+
+### Pinecone namespaces
+
+| Namespace | Contents | Read by |
+|---|---|---|
+| `banking_policy` | the 19 policy snippets (live) | WF-04 `Policy Knowledge Base` |
+| `banking_policy_v2` | the six Drive-sourced documents (staged, not yet live) | nothing yet — switch WF-04 across once verified |
+| `fraud_patterns` | ten fraud typologies | WF-03 `Search Fraud Patterns` |
+
+They are deliberately separate. A fraud typology must never be retrievable by the customer-facing policy assistant — it would be both wrong and a disclosure of how detection works. And because past support cases are never indexed at all, the "similar-but-wrong past case" failure the brief asks about cannot occur by construction.
+
+### A recurring hazard, now automated away
+
+Adding a rule to an n8n Switch shifts its fallback output index, and this project has been bitten by it four times (Sessions 7, 9, 10, 11). The graph audit now checks rule count against connection count for every switch and reports any rule or fallback with no target. Run it after every switch change.

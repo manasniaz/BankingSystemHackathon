@@ -61,6 +61,8 @@ We deliberately do not send everything to a human. Routing everything to a perso
 - Loans of Rs 200,000 or less
 - Opening a single or joint account
 - Scheduled standing order payments
+- Producing and sending your account statement
+- Paying monthly interest on a savings account
 - Any policy question we can answer confidently from these documents
 
 ### Always involves a person at the bank
@@ -68,7 +70,8 @@ We deliberately do not send everything to a human. Routing everything to a perso
 - A loan above Rs 200,000
 - A policy question our assistant cannot answer confidently from published policy
 - Releasing a fraud hold — always, without exception
-- Investigating a dispute
+- Investigating and deciding a dispute
+- **Reversing a completed transfer** — there is no automated path to this at all
 
 In these cases nothing is sent to you until a member of our operations team has reviewed it, and you are told a review is underway rather than being handed a guess.
 
@@ -79,6 +82,8 @@ Some approvals are not the bank's to make, and we refer them to you instead:
 - A co-holder approving a transfer on an all-signatures joint account
 - A parent or guardian approving an account for someone under 18
 - Any holder confirming they really want an account closed
+- Every holder agreeing before someone is added to, or removed from, a joint account — including the person joining or leaving
+- Co-holders giving their side of a dispute raised on a shared account
 
 These arrive as an email carrying a short reference code. You reply with the single word `APPROVE` or `REJECT`.
 
