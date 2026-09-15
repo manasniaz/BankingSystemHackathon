@@ -75,6 +75,31 @@ Configure the following credentials in **n8n → Credentials**:
 | `Pinecone account` | `pineconeApi` | WF-04, WF-09 | Pinecone API Key (index: `banking-policy-index`, namespace: `banking_policy`, 3072 dimensions). |
 | `Google Gemini API` | `googlePalmApi` | WF-04, WF-09 | Google Gemini API Key, model `gemini-embedding-001` (the older `text-embedding-004`/`embedding-001` models are retired — do not use them). |
 
+### The two mailboxes
+
+The system uses two Gmail addresses but **only one Gmail credential**:
+
+| | Address | Role |
+|---|---|---|
+| **Bank inbox** | the account the `Gmail account` credential is connected to | The only address customers see. WF-00's Gmail Trigger polls it; every outbound email is sent from it. |
+| **Ops inbox** | any second address you control | Receives every request that needs a human decision. The operator replies APPROVE or REJECT; that reply arrives at the **bank** inbox, where WF-00 matches the reference code and applies the decision. |
+
+The ops inbox needs no credential and no trigger of its own — it is only ever a `sendTo` target and a reply-from address. That is deliberate: a second Gmail OAuth connection would have to be authorised by hand, and nothing here needs one.
+
+**Both addresses are redacted in this repository** (`ops-team@yourbank.example` and `bank@yourbank.example`); the live n8n Cloud workflows use the real ones. After importing, set your real ops address in each of these:
+
+| Workflow | Node | Field |
+|---|---|---|
+| WF-00 | `Detect Reference Reply` | the `OPS_TEAM_EMAIL` constant at the top of the Code node — **this one is the security check**, not just a destination: an `OPS-` reply is only honoured when the real Gmail sender matches it |
+| WF-00 | `Alert Ops - Loan Pending Review`, `Confirm Decision to Ops Team`, `Send Ops Decision Problem Email`, `Alert Ops - Joint Transfer Fraud Block` | `sendTo` |
+| WF-01 | `Email Ops - Transfer Failed Alert` | `sendTo` |
+| WF-02 | `Email Ops Team - Standing Order Failed` | `sendTo` |
+| WF-03 | `Email Ops - Fraud Hold Placed Alert` | `sendTo` |
+| WF-04 | `Alert Ops - Policy Answer Needs Review` | `sendTo` |
+| WF-06 | `Email Ops Team - Reconciliation Mismatch` | `sendTo` |
+
+Do not point the ops address at the bank inbox itself. WF-00 would then read the bank's own alerts as ops replies.
+
 ---
 
 ## Import & Activation Procedure

@@ -176,9 +176,9 @@
     {
       "parameters": {
         "sendTo": "ops-team@yourbank.example",
-        "subject": "FRAUD ALERT: Account Hold Placed - Requires Human Review",
+        "subject": "=[{{ $json.ref_code }}] FRAUD HOLD placed - account frozen, review needed",
         "emailType": "text",
-        "message": "={{ \"FRAUD HOLD ALERT\\n\\nAccount ID: \" + $('Validate Request Payload').item.json.params.account_id + \"\\nAmount: \" + $('Validate Request Payload').item.json.params.amount + \" cents\\nRisk Score: \" + $('Validate & Evaluate Fraud Decision').item.json.risk_score + \"\\nDecision: \" + $('Validate & Evaluate Fraud Decision').item.json.decision + \"\\nReason: \" + $('Validate & Evaluate Fraud Decision').item.json.reason + \"\\n\\nAction Required: Human operator review via release_account_hold RPC.\" }}",
+        "message": "=A transfer scored above the fraud threshold, so the account has been frozen automatically and no money moved.\n\nAccount ID: {{ $('Validate Request Payload').item.json.params.account_id }}\nAmount attempted: Rs {{ ($('Validate Request Payload').item.json.params.amount / 100).toFixed(2) }}\nRisk score: {{ $('Validate & Evaluate Fraud Decision').item.json.risk_score }} (threshold 75)\nDecision: {{ $('Validate & Evaluate Fraud Decision').item.json.decision }}\nReason: {{ $('Validate & Evaluate Fraud Decision').item.json.reason }}\n\nThe customer cannot clear this themselves - by design, only a human can.\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE   - this was a legitimate transaction; release the freeze\nor\n    REJECT    - genuinely suspicious; leave the account frozen\n\nOptionally add a line starting with NOTE: to record what you found.\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ref_code }}\nTYPE: fraud_hold_release\n========================",
         "options": {
           "appendAttribution": false
         }
@@ -245,6 +245,47 @@
         1120,
         208
       ]
+    },
+    {
+      "id": "b1d6f0a2-4c77-4e1a-9f33-7a0c5e11aa01",
+      "name": "Raise Hold Release Ops Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/create_ops_approval",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_request_type: 'fraud_hold_release', p_target_id: String($json.data || $json).replace(/\"/g, '').trim(), p_subject: 'Fraud freeze placed - release?', p_summary: 'Risk score ' + $('Validate & Evaluate Fraud Decision').item.json.risk_score + ': ' + $('Validate & Evaluate Fraud Decision').item.json.reason, p_payload: { account_id: $('Validate Request Payload').item.json.params.account_id, amount: $('Validate Request Payload').item.json.params.amount, risk_score: $('Validate & Evaluate Fraud Decision').item.json.risk_score, reason: $('Validate & Evaluate Fraud Decision').item.json.reason } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
     }
   ],
   "connections": {
@@ -325,7 +366,7 @@
       "main": [
         [
           {
-            "node": "Email Ops - Fraud Hold Placed Alert",
+            "node": "Raise Hold Release Ops Approval",
             "type": "main",
             "index": 0
           }
@@ -342,6 +383,17 @@
           }
         ]
       ]
+    },
+    "Raise Hold Release Ops Approval": {
+      "main": [
+        [
+          {
+            "node": "Email Ops - Fraud Hold Placed Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -349,7 +401,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "e1a584dd-1357-4b3c-91fb-1e42f812fe47",
+  "versionId": "4fade5a4-6758-4f89-8c1b-a388b915ea8a",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

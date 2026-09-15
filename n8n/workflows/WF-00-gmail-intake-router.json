@@ -38,7 +38,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        280,
+        288,
         0
       ]
     },
@@ -55,7 +55,7 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        1400,
+        1408,
         0
       ],
       "alwaysOutputData": true,
@@ -116,7 +116,7 @@
       "typeVersion": 2.1,
       "position": [
         2800,
-        420
+        432
       ],
       "webhookId": "ba3273c5-e039-471d-a2e0-28d46b1f7217",
       "credentials": {
@@ -138,8 +138,8 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        1960,
-        140
+        1968,
+        144
       ],
       "credentials": {
         "supabaseApi": {
@@ -150,7 +150,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add|make)\\b/.test(text);\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud(ulent)?|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize|without (my )?permission|used my card)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nfunction extractAmountMinor(text) {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  const amtMatch = text.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = meta.bodyText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let destAccount = null;\n  const acctMatch = meta.bodyText.match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = meta.bodyText.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  let termMonths = 12;\n  const termMatch = rawText.match(/(\\d+)\\s*(month|months|year|years)/i);\n  if (termMatch) {\n    const n = parseInt(termMatch[1], 10);\n    termMonths = /year/i.test(termMatch[2]) ? n * 12 : n;\n  }\n\n  loanDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor,\n    term_months: termMonths\n  };\n} else if (intent === 'DEPOSIT') {\n  const amountMinor = extractAmountMinor(rawText);\n\n  depositDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountMinor\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add|make)\\b/.test(text);\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud(ulent)?|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize|without (my )?permission|used my card)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nfunction extractAmountMinor(text) {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  const amtMatch = String(text || '').match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\n// Body-first for money too: a number left over in a stale or reused subject\n// line must never outrank the amount the customer wrote in THIS message.\nfunction amountFromMessage() {\n  return extractAmountMinor(meta.bodyText) || extractAmountMinor(rawText);\n}\n\n// Customers write loan terms in days, weeks, months or years. This product is\n// monthly-installment based (1-60 months), so anything shorter rounds UP to\n// the nearest whole month instead of silently falling back to a year.\nfunction parseTerm(text) {\n  const m = String(text || '').match(/(\\d+)\\s*(day|days|week|weeks|month|months|year|years)/i);\n  if (!m) return null;\n  const n = parseInt(m[1], 10);\n  const unit = m[2].toLowerCase();\n  let t;\n  if (unit.indexOf('year') === 0) t = n * 12;\n  else if (unit.indexOf('month') === 0) t = n;\n  else if (unit.indexOf('week') === 0) t = Math.ceil(n / 4);\n  else t = Math.ceil(n / 30);\n  return Math.min(60, Math.max(1, t));\n}\n\nfunction termMonthsFromMessage() {\n  const fromBody = parseTerm(meta.bodyText);\n  if (fromBody !== null) return fromBody;\n  const fromRaw = parseTerm(rawText);\n  if (fromRaw !== null) return fromRaw;\n  return 12;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = (meta.bodyText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = amountFromMessage();\n\n  let destAccount = null;\n  const acctMatch = (meta.bodyText || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = (meta.bodyText || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  loanDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountFromMessage(),\n    term_months: termMonthsFromMessage()\n  };\n} else if (intent === 'DEPOSIT') {\n  depositDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountFromMessage()\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
       },
       "id": "384b42dd-9313-4a0f-b573-d225d837e452",
       "name": "Classify Intent & Authorize Request",
@@ -158,7 +158,7 @@
       "typeVersion": 2,
       "position": [
         2240,
-        140
+        144
       ]
     },
     {
@@ -418,7 +418,7 @@
       "typeVersion": 3.2,
       "position": [
         2800,
-        700
+        704
       ]
     },
     {
@@ -430,8 +430,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3080,
-        840
+        3088,
+        848
       ]
     },
     {
@@ -450,7 +450,7 @@
       "typeVersion": 2.1,
       "position": [
         3360,
-        840
+        848
       ],
       "webhookId": "71f96fa4-870c-4253-9552-ea9fb6900dff",
       "credentials": {
@@ -476,7 +476,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
       "position": [
-        4760,
+        4768,
         0
       ]
     },
@@ -522,8 +522,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
       "position": [
-        3080,
-        700
+        3088,
+        704
       ]
     },
     {
@@ -541,8 +541,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
-        700
+        3648,
+        704
       ],
       "webhookId": "c2950656-6d05-4cfc-80d0-c5cf4b56f949",
       "credentials": {
@@ -567,7 +567,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3080,
+        3088,
         1680
       ],
       "webhookId": "d1d8f946-f944-441d-a5b9-35f53acbfc18",
@@ -593,8 +593,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3080,
-        1540
+        3088,
+        1552
       ],
       "webhookId": "becdc342-a3cc-4dcf-8309-17f9543556be",
       "credentials": {
@@ -613,8 +613,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3080,
-        1260
+        3088,
+        1264
       ]
     },
     {
@@ -648,7 +648,7 @@
       "typeVersion": 2.2,
       "position": [
         3360,
-        1260
+        1264
       ]
     },
     {
@@ -666,8 +666,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
-        1400
+        3648,
+        1408
       ],
       "webhookId": "ef18aa39-e9be-4906-9ae1-dbd989296c63",
       "credentials": {
@@ -690,8 +690,8 @@
       "type": "n8n-nodes-base.supabase",
       "typeVersion": 1,
       "position": [
-        3640,
-        1260
+        3648,
+        1264
       ],
       "alwaysOutputData": true,
       "credentials": {
@@ -750,8 +750,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        4200,
-        280
+        4208,
+        288
       ],
       "webhookId": "69882267-c3d7-4ab8-909c-cf44b31548c0",
       "credentials": {
@@ -791,8 +791,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        4200,
-        140
+        4208,
+        144
       ],
       "alwaysOutputData": true
     },
@@ -855,8 +855,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        4760,
-        140
+        4768,
+        144
       ],
       "webhookId": "8270b018-1ce8-4696-9a28-a366801c0bb2",
       "credentials": {
@@ -881,8 +881,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3080,
-        1400
+        3088,
+        1408
       ],
       "webhookId": "ebde257c-c3fa-4ef8-8ded-8efb7956cefd",
       "credentials": {
@@ -901,8 +901,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3080,
-        980
+        3088,
+        992
       ]
     },
     {
@@ -937,7 +937,7 @@
       "typeVersion": 4.2,
       "position": [
         3360,
-        980
+        992
       ],
       "credentials": {
         "supabaseApi": {
@@ -961,8 +961,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
-        840
+        3648,
+        848
       ],
       "webhookId": "458288ad-b760-4fb6-9671-f36d781b5d8a",
       "credentials": {
@@ -974,14 +974,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\n\nfunction detect(text) {\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n  return { wantsOpen, wantsPolicy };\n}\n\nlet result = detect(bodyLower);\nif (!result.wantsOpen && !result.wantsPolicy) {\n  result = detect(subjectLower);\n}\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = meta.bodyText.match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(bodyLower + ' ' + subjectLower)) accountType = 'savings';\n\nreturn [{ json: { wantsOpen: result.wantsOpen, wantsPolicy: result.wantsPolicy, fullName, accountType, fromEmail: meta.fromEmail, subject: meta.subject, bodyText: meta.bodyText } }];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\n\nfunction detect(text) {\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n  return { wantsOpen, wantsPolicy };\n}\n\nlet result = detect(bodyLower);\nif (!result.wantsOpen && !result.wantsPolicy) {\n  result = detect(subjectLower);\n}\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = (meta.bodyText || '').match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(bodyLower + ' ' + subjectLower)) accountType = 'savings';\n\n// ---- date of birth -------------------------------------------------------\n// Accepts 2010-05-14, 14/05/2010, 14 May 2010 and May 14, 2010. Day-first is the\n// default for the ambiguous numeric form, which is the convention in Pakistan;\n// it is only swapped when day-first is impossible.\nconst MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };\n\nfunction pad(n) { return String(n).padStart(2, '0'); }\n\nfunction buildDate(y, m, d) {\n  if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return null;\n  const iso = y + '-' + pad(m) + '-' + pad(d);\n  const parsed = new Date(iso + 'T00:00:00Z');\n  if (isNaN(parsed.getTime())) return null;\n  // Reject roll-over dates such as 2010-02-31.\n  if (parsed.getUTCFullYear() !== y || parsed.getUTCMonth() + 1 !== m || parsed.getUTCDate() !== d) return null;\n  return iso;\n}\n\nfunction parseDob(text) {\n  const t = String(text || '');\n  let m;\n\n  m = t.match(/\\b((?:19|20)\\d{2})-(\\d{1,2})-(\\d{1,2})\\b/);\n  if (m) { const d = buildDate(+m[1], +m[2], +m[3]); if (d) return d; }\n\n  m = t.match(/\\b(\\d{1,2})(?:st|nd|rd|th)?[\\s.,-]+([A-Za-z]{3,9})[\\s.,-]+((?:19|20)\\d{2})\\b/);\n  if (m) {\n    const mo = MONTHS[m[2].slice(0, 3).toLowerCase()];\n    if (mo) { const d = buildDate(+m[3], mo, +m[1]); if (d) return d; }\n  }\n\n  m = t.match(/\\b([A-Za-z]{3,9})[\\s.,-]+(\\d{1,2})(?:st|nd|rd|th)?[\\s.,-]+((?:19|20)\\d{2})\\b/);\n  if (m) {\n    const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];\n    if (mo) { const d = buildDate(+m[3], mo, +m[2]); if (d) return d; }\n  }\n\n  m = t.match(/\\b(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-]((?:19|20)\\d{2})\\b/);\n  if (m) {\n    let day = +m[1], mon = +m[2];\n    if (day <= 12 && mon > 12) { const tmp = day; day = mon; mon = tmp; }\n    const d = buildDate(+m[3], mon, day);\n    if (d) return d;\n  }\n\n  return null;\n}\n\nconst dobSource = (meta.bodyText || '') + '\\n' + (meta.subject || '');\nconst dateOfBirth = parseDob(dobSource);\n\nlet ageYears = null;\nif (dateOfBirth) {\n  const dob = new Date(dateOfBirth + 'T00:00:00Z');\n  const now = new Date();\n  ageYears = now.getUTCFullYear() - dob.getUTCFullYear();\n  const beforeBirthday = (now.getUTCMonth() < dob.getUTCMonth()) ||\n    (now.getUTCMonth() === dob.getUTCMonth() && now.getUTCDate() < dob.getUTCDate());\n  if (beforeBirthday) ageYears -= 1;\n  if (ageYears < 0 || ageYears > 120) ageYears = null;\n}\n\n// ---- guardian email ------------------------------------------------------\nconst emailRe = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g;\nconst allEmails = (meta.bodyText || '').match(emailRe) || [];\nconst candidates = allEmails\n  .map(e => e.toLowerCase())\n  .filter(e => e !== meta.fromEmail && !e.endsWith('@yourbank.example'));\n\nlet guardianEmail = null;\nconst labelled = (meta.bodyText || '').match(/(?:guardian|parent|father|mother|mum|mom|dad)[^\\n]{0,40}?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})/i);\nif (labelled) guardianEmail = labelled[1].toLowerCase();\nif (!guardianEmail && candidates.length === 1) guardianEmail = candidates[0];\nif (guardianEmail === meta.fromEmail) guardianEmail = null;\n\n// ---- phone ---------------------------------------------------------------\nlet phoneNumber = null;\nconst phoneMatch = (meta.bodyText || '').match(/(?:phone|mobile|cell|contact)[^\\n]{0,20}?((?:\\+?92|0)[\\s-]?\\d{3}[\\s-]?\\d{7})/i);\nif (phoneMatch) phoneNumber = phoneMatch[1].replace(/\\s+/g, ' ').trim();\n\nreturn [{ json: {\n  wantsOpen: result.wantsOpen,\n  wantsPolicy: result.wantsPolicy,\n  fullName,\n  accountType,\n  dateOfBirth,\n  ageYears,\n  isMinor: ageYears !== null && ageYears < 18,\n  guardianEmail,\n  phoneNumber,\n  fromEmail: meta.fromEmail,\n  subject: meta.subject,\n  bodyText: meta.bodyText\n} }];"
       },
       "id": "8d42132d-de78-4e3b-a0bb-adbff9e39a9f",
       "name": "Extract New Sender Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1960,
+        1968,
         0
       ]
     },
@@ -1051,8 +1051,8 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        2520,
-        140
+        2528,
+        144
       ]
     },
     {
@@ -1087,7 +1087,7 @@
       "typeVersion": 4.2,
       "position": [
         2800,
-        140
+        144
       ],
       "credentials": {
         "supabaseApi": {
@@ -1126,14 +1126,14 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3080,
+        3088,
         0
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/open_account_for_profile",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/open_account_with_details",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
@@ -1147,7 +1147,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"p_profile_id\": \"{{ $json.id }}\",\n  \"p_account_type\": \"{{ $('Extract New Sender Intent').item.json.accountType }}\",\n  \"p_currency\": \"PKR\",\n  \"p_holder_type\": \"adult\"\n}",
+        "jsonBody": "={{ JSON.stringify({ p_profile_id: $json.id, p_account_type: $('Extract New Sender Intent').item.json.accountType, p_currency: 'PKR', p_date_of_birth: $('Extract New Sender Intent').item.json.dateOfBirth, p_phone_number: $('Extract New Sender Intent').item.json.phoneNumber }) }}",
         "options": {
           "response": {
             "response": {
@@ -1186,7 +1186,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
+        3648,
         0
       ],
       "webhookId": "2bda80f8-f2ab-4152-9406-55fbd599dca7",
@@ -1213,7 +1213,7 @@
       "typeVersion": 2.1,
       "position": [
         3360,
-        140
+        144
       ],
       "webhookId": "c099cade-2b92-48ae-8405-111ca40599d2",
       "credentials": {
@@ -1225,14 +1225,14 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst text = ((item.subject||'') + ' ' + (item.bodyText||'')).toLowerCase();\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(text)) accountType = 'savings';\n\nif (!item.jointInviteeEmail) {\n  return [{ json: { ok: false, reason: 'We could not find an email address to invite. Please include it clearly, for example: \"I want to open a joint account with bob@gmail.com\".', fromEmail: item.fromEmail, subject: item.subject, full_name: item.full_name } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  inviter_profile_id: item.profile_id,\n  invitee_email: item.jointInviteeEmail,\n  account_type: accountType,\n  fromEmail: item.fromEmail,\n  subject: item.subject,\n  full_name: item.full_name\n} }];"
+        "jsCode": "const item = $input.first().json;\nconst text = ((item.subject || '') + ' ' + (item.bodyText || '')).toLowerCase();\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(text)) accountType = 'savings';\n\n// Mandate: either-or (any holder acts alone) is the default; all-signatures means\n// every holder has to approve each transfer. Only switch on an explicit request.\nlet authorityModel = 'either_or';\nif (/\\b(both (of us |signatures?|holders?|must|have to|need)|all (signatures?|holders?)|two signatures?|dual (signature|control|authorisation|authorization)|joint(ly)? sign|require[sd]? (both|all))\\b/.test(text)) {\n  authorityModel = 'all_signatures';\n}\nif (/\\b(either (of us|one)|any (one )?(of us|holder)|single signature|independently|on (my|our) own)\\b/.test(text)) {\n  authorityModel = 'either_or';\n}\n\nif (!item.jointInviteeEmail) {\n  return [{ json: { ok: false, reason: 'We could not find an email address to invite. Please include it clearly, for example: \"I want to open a joint account with bob@gmail.com\".', fromEmail: item.fromEmail, subject: item.subject, full_name: item.full_name } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  inviter_profile_id: item.profile_id,\n  invitee_email: item.jointInviteeEmail,\n  account_type: accountType,\n  authority_model: authorityModel,\n  authority_label: authorityModel === 'all_signatures'\n    ? 'both holders must approve every transfer'\n    : 'either holder can act on their own',\n  fromEmail: item.fromEmail,\n  subject: item.subject,\n  full_name: item.full_name\n} }];"
       },
       "id": "1ed19b61-d11d-41eb-abef-3c2a99406d1c",
       "name": "Resolve Joint Invitation Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3080,
+        3088,
         1120
       ]
     },
@@ -1285,7 +1285,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
+        3648,
         1120
       ],
       "webhookId": "228526c1-642c-43b1-a56d-24f69abbe78f",
@@ -1313,7 +1313,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"p_inviter_profile_id\": \"{{ $json.inviter_profile_id }}\",\n  \"p_invitee_email\": \"{{ $json.invitee_email }}\",\n  \"p_account_type\": \"{{ $json.account_type }}\",\n  \"p_currency\": \"PKR\"\n}",
+        "jsonBody": "={{ JSON.stringify({ p_inviter_profile_id: $json.inviter_profile_id, p_invitee_email: $json.invitee_email, p_account_type: $json.account_type, p_currency: 'PKR', p_authority_model: $json.authority_model }) }}",
         "options": {
           "response": {
             "response": {
@@ -1327,8 +1327,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3640,
-        980
+        3648,
+        992
       ],
       "credentials": {
         "supabaseApi": {
@@ -1342,7 +1342,7 @@
         "sendTo": "={{ $('Resolve Joint Invitation Request').item.json.invitee_email }}",
         "subject": "=Joint Account Invitation from {{ $('Resolve Joint Invitation Request').item.json.full_name }}",
         "emailType": "text",
-        "message": "=Hello,\n\n{{ $('Resolve Joint Invitation Request').item.json.full_name }} ({{ $('Resolve Joint Invitation Request').item.json.fromEmail }}) has invited you to open a joint bank account with Digital Bank.\n\nTo ACCEPT: reply to this email with \"I accept\" within the next 5 minutes.\nTo DECLINE: reply with \"I decline\".\n\nThis invitation expires at {{ $json.expires_at }} (5 minutes from now). If you don't respond in time, it will automatically expire and no account will be created.\n\nDigital Bank New Accounts Team",
+        "message": "=Hello,\n\n{{ $('Resolve Joint Invitation Request').item.json.full_name }} ({{ $('Resolve Joint Invitation Request').item.json.fromEmail }}) has invited you to open a joint bank account with Digital Bank.\n\nAccount type: {{ $('Resolve Joint Invitation Request').item.json.account_type }}, in PKR\nHow the account will work: {{ $('Resolve Joint Invitation Request').item.json.authority_label }}\nClosing the account will always need both of you to agree.\n\nTo ACCEPT: reply to this email with \"I accept\" within the next 5 minutes.\nTo DECLINE: reply with \"I decline\".\n\nThis invitation expires at {{ $json.expires_at }} (5 minutes from now). If you don't respond in time, it will automatically expire and no account will be created.\n\nDigital Bank New Accounts Team",
         "options": {
           "appendAttribution": false
         }
@@ -1353,7 +1353,7 @@
       "typeVersion": 2.1,
       "position": [
         3920,
-        420
+        432
       ],
       "webhookId": "bbe92d36-e3a4-459f-b8d2-9045fdce3c56",
       "credentials": {
@@ -1366,9 +1366,9 @@
     {
       "parameters": {
         "sendTo": "={{ $('Resolve Joint Invitation Request').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Resolve Joint Invitation Request').item.json.subject }}",
+        "subject": "=RE: {{ $('Resolve Joint Invitation Request').item.json.subject }} - invitation sent",
         "emailType": "text",
-        "message": "=Hello {{ $('Resolve Joint Invitation Request').item.json.full_name }},\n\nWe've sent a joint account invitation to {{ $('Resolve Joint Invitation Request').item.json.invitee_email }}. They have 5 minutes to accept.\n\nWe'll notify you as soon as they respond (or if the invitation expires).\n\nDigital Bank New Accounts Team",
+        "message": "=Hello {{ $('Resolve Joint Invitation Request').item.json.full_name }},\n\nWe have emailed {{ $('Resolve Joint Invitation Request').item.json.invitee_email }} to invite them onto a joint {{ $('Resolve Joint Invitation Request').item.json.account_type }} account with you.\n\nHow the account will work: {{ $('Resolve Joint Invitation Request').item.json.authority_label }}.\nClosing the account will always need both of you to agree.\n\nIf you wanted the other arrangement, just reply and say so - for example \"both of us must approve every transfer\" or \"either of us can act alone\" - and we will send a fresh invitation.\n\nThe invitation expires at {{ $json.expires_at }}. We will let you know as soon as they respond.\n\nDigital Bank New Accounts Team",
         "options": {
           "appendAttribution": false
         }
@@ -1379,7 +1379,7 @@
       "typeVersion": 2.1,
       "position": [
         3920,
-        280
+        288
       ],
       "webhookId": "207edd5e-5c3a-46ae-9ff5-085dac20728c",
       "credentials": {
@@ -1422,7 +1422,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        840,
+        848,
         0
       ]
     },
@@ -1491,8 +1491,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1400,
-        140
+        1408,
+        144
       ],
       "credentials": {
         "supabaseApi": {
@@ -1532,7 +1532,7 @@
       "typeVersion": 2.2,
       "position": [
         1680,
-        140
+        144
       ]
     },
     {
@@ -1566,8 +1566,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1960,
-        280
+        1968,
+        288
       ],
       "credentials": {
         "supabaseApi": {
@@ -1607,7 +1607,7 @@
       "typeVersion": 2.2,
       "position": [
         2240,
-        280
+        288
       ]
     },
     {
@@ -1641,8 +1641,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2520,
-        420
+        2528,
+        432
       ],
       "credentials": {
         "supabaseApi": {
@@ -1666,8 +1666,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        2520,
-        560
+        2528,
+        640
       ],
       "webhookId": "01568cc2-7315-48dc-9006-80ebf7fe9a4f",
       "credentials": {
@@ -1686,8 +1686,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1960,
-        420
+        1968,
+        432
       ]
     },
     {
@@ -1706,7 +1706,7 @@
       "typeVersion": 2.1,
       "position": [
         2240,
-        420
+        432
       ],
       "webhookId": "38cf6256-5298-410f-9e4b-9346e85449cb",
       "credentials": {
@@ -1731,8 +1731,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        2520,
-        700
+        2528,
+        800
       ],
       "webhookId": "7d2a3d63-80e5-4385-89ce-29deb6da5ad0",
       "credentials": {
@@ -1793,7 +1793,7 @@
       "typeVersion": 1.1,
       "position": [
         2800,
-        280
+        288
       ]
     },
     {
@@ -1812,7 +1812,7 @@
       "typeVersion": 2.1,
       "position": [
         3360,
-        280
+        288
       ],
       "webhookId": "1af6fbe7-2f96-47ae-a439-b9ecde55ce02",
       "credentials": {
@@ -1853,8 +1853,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        280,
-        140
+        288,
+        144
       ],
       "credentials": {
         "supabaseApi": {
@@ -1873,7 +1873,7 @@
       "typeVersion": 2,
       "position": [
         560,
-        140
+        144
       ]
     },
     {
@@ -1885,8 +1885,8 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        840,
-        140
+        848,
+        144
       ]
     },
     {
@@ -1905,7 +1905,7 @@
       "typeVersion": 2.1,
       "position": [
         1120,
-        140
+        144
       ],
       "webhookId": "a38031f4-e855-42c4-a7b9-94a4b6c00e51",
       "credentials": {
@@ -1946,7 +1946,7 @@
       "typeVersion": 2.2,
       "position": [
         3360,
-        700
+        704
       ]
     },
     {
@@ -1979,8 +1979,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3080,
-        140
+        3088,
+        144
       ]
     },
     {
@@ -2014,8 +2014,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3080,
-        420
+        3088,
+        432
       ],
       "credentials": {
         "supabaseApi": {
@@ -2055,7 +2055,7 @@
       "typeVersion": 2.2,
       "position": [
         3360,
-        420
+        432
       ]
     },
     {
@@ -2088,8 +2088,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        3640,
-        140
+        3648,
+        144
       ]
     },
     {
@@ -2097,7 +2097,7 @@
         "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
         "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
         "emailType": "text",
-        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nYour loan application has been approved and the funds have been disbursed to your account.\n\nPrincipal: Rs {{ ($('Route by Intent').item.json.loanDetails.amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.term_months }} months\nMonthly repayment: Rs {{ ($json.monthly_payment_amount / 100).toFixed(2) }} (collected automatically from this account each month)\n\nDigital Bank Lending Team",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nYour loan application has been approved and the funds have been disbursed to your account.\n\nPrincipal: Rs {{ ($('Route by Intent').item.json.loanDetails.amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.term_months }} month{{ $json.term_months === 1 ? '' : 's' }}\nMonthly repayment: Rs {{ ($json.monthly_payment_amount / 100).toFixed(2) }} (collected automatically from this account each month)\n\nDigital Bank Lending Team",
         "options": {
           "appendAttribution": false
         }
@@ -2123,7 +2123,7 @@
         "sendTo": "={{ $('Route by Intent').item.json.fromEmail }}",
         "subject": "=RE: {{ $('Route by Intent').item.json.subject }}",
         "emailType": "text",
-        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nThank you for your loan application. Because of the amount requested, it requires a quick review by a specialist before funds can be disbursed. We'll follow up shortly.\n\nDigital Bank Lending Team",
+        "message": "=Hello {{ $('Route by Intent').item.json.full_name }},\n\nThank you for your loan application.\n\nPrincipal requested: Rs {{ ($('Apply For Loan').item.json.principal_amount / 100).toFixed(2) }}\nTerm: {{ $('Apply For Loan').item.json.term_months }} month{{ $('Apply For Loan').item.json.term_months === 1 ? '' : 's' }}\nTotal repayable: Rs {{ ($('Apply For Loan').item.json.total_repayable / 100).toFixed(2) }} (10% flat interest)\nMonthly repayment: Rs {{ ($('Apply For Loan').item.json.monthly_payment_amount / 100).toFixed(2) }}\n\nBecause this is above our Rs 200,000 automatic approval limit, it needs a quick review by our credit team. We will email you the decision as soon as it is made - you do not need to do anything in the meantime.\n\nDigital Bank Lending Team",
         "options": {
           "appendAttribution": false
         }
@@ -2134,7 +2134,7 @@
       "typeVersion": 2.1,
       "position": [
         3920,
-        140
+        144
       ],
       "webhookId": "f2cb06b8-6043-4efc-9ed9-8ef1fcdf339f",
       "credentials": {
@@ -2147,9 +2147,9 @@
     {
       "parameters": {
         "sendTo": "ops-team@yourbank.example",
-        "subject": "=Loan Pending Review: {{ $json.loan_id }}",
+        "subject": "=[{{ $('Apply For Loan').item.json.ops_ref_code }}] Loan approval needed - Rs {{ ($('Apply For Loan').item.json.principal_amount / 100).toFixed(2) }}",
         "emailType": "text",
-        "message": "=A loan application requires manual review.\n\nApplicant: {{ $('Classify Intent & Authorize Request').item.json.full_name }} ({{ $('Classify Intent & Authorize Request').item.json.fromEmail }})\nLoan ID: {{ $json.loan_id }}\nPrincipal requested: Rs {{ ($json.principal_amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.term_months }} months\n\nTo approve or reject, POST to /webhook/approve-loan (WF-05):\n{ \"loan_id\": \"{{ $json.loan_id }}\", \"action\": \"approve\" }  (or \"reject\", with an optional \"reason\")\n\nDigital Bank Ops",
+        "message": "=A loan application is above the Rs 200,000 auto-approval ceiling and needs a human decision.\n\nApplicant: {{ $('Apply For Loan').item.json.applicant_name }} ({{ $('Apply For Loan').item.json.applicant_email }})\nPrincipal requested: Rs {{ ($('Apply For Loan').item.json.principal_amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($('Apply For Loan').item.json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $('Apply For Loan').item.json.term_months }} month{{ $('Apply For Loan').item.json.term_months === 1 ? '' : 's' }}\nMonthly repayment: Rs {{ ($('Apply For Loan').item.json.monthly_payment_amount / 100).toFixed(2) }}\nInterest: 10% flat\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nOptionally add a line starting with NOTE: to record a reason (it is shown to the customer on a rejection).\n\nKeep the reference {{ $('Apply For Loan').item.json.ops_ref_code }} somewhere in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both.\n\nApproving disburses the funds from the treasury and sets up the repayment standing order automatically. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $('Apply For Loan').item.json.ops_ref_code }}\nTYPE: loan\n========================",
         "options": {
           "appendAttribution": false
         }
@@ -2159,7 +2159,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        4200,
+        4208,
         0
       ],
       "webhookId": "fe837966-e4e5-4b88-ba4c-ce362b3d4258",
@@ -2185,8 +2185,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
-        280
+        3648,
+        288
       ],
       "webhookId": "1c14bf06-b30d-4f6f-b822-26a9ba29a057",
       "credentials": {
@@ -2227,7 +2227,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        3080,
+        3088,
         560
       ],
       "credentials": {
@@ -2286,8 +2286,8 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
-        420
+        3648,
+        432
       ],
       "webhookId": "e9408ab7-5437-4c72-9356-260f52499656",
       "credentials": {
@@ -2312,7 +2312,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        3640,
+        3648,
         560
       ],
       "webhookId": "74a24e95-e124-45c0-99e5-043c83462019",
@@ -2324,14 +2324,6 @@
       }
     },
     {
-      "id": "2c850a2b-2fe9-4ca9-8f5d-f42356af34f0",
-      "name": "Regex Uncertain?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        2520,
-        280
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -2354,23 +2346,31 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "2c850a2b-2fe9-4ca9-8f5d-f42356af34f0",
+      "name": "Regex Uncertain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2528,
+        288
+      ]
     },
     {
-      "id": "10a8d197-2986-4570-8235-8859bb6df657",
-      "name": "Groq Chat Model (Intent Classifier)",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
-      "typeVersion": 1,
-      "position": [
-        2800,
-        760
-      ],
       "parameters": {
         "model": "openai/gpt-oss-safeguard-20b",
         "options": {
           "temperature": 0.1
         }
       },
+      "id": "10a8d197-2986-4570-8235-8859bb6df657",
+      "name": "Groq Chat Model (Intent Classifier)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        2800,
+        768
+      ],
       "credentials": {
         "groqApi": {
           "id": "f0I08FemfuBnyTu1",
@@ -2379,6 +2379,13 @@
       }
     },
     {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
+        "options": {
+          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own balance/statement. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
+        }
+      },
       "id": "5a40c985-2eb2-4b17-b131-75309b5b291b",
       "name": "Classify Intent via LLM",
       "type": "@n8n/n8n-nodes-langchain.agent",
@@ -2386,38 +2393,22 @@
       "position": [
         2800,
         560
-      ],
-      "parameters": {
-        "promptType": "define",
-        "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
-        "hasOutputParser": false,
-        "options": {
-          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own balance/statement. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
-        }
-      }
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "const original = $('Classify Intent & Authorize Request').item.json;\nconst validLabels = ['JOINT_OPEN','OPEN_ACCOUNT','DISPUTE','LOAN_APPLICATION','DEPOSIT','STANDING_ORDER','TRANSFER','BALANCE','POLICY_RAG','UNAUTHORIZED_ACCESS','UNKNOWN'];\n\nlet intent = String(($json.output || $json.text || '')).trim().toUpperCase().replace(/[^A-Z_]/g, '');\nif (!validLabels.includes(intent)) intent = 'UNKNOWN';\n\nconst meta = { fromEmail: original.fromEmail, subject: original.subject, bodyText: original.bodyText, messageId: original.messageId };\nconst authorizedAccounts = original.authorizedAccounts || [];\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\nfunction extractAmountMinor(text) {\n  const amtMatch = String(text || '').match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\n// Kept deliberately identical to the regex path in Classify Intent &\n// Authorize Request -- a customer must get the same amount and term whether\n// keyword matching or the LLM fallback decided their intent.\nfunction amountFromMessage() {\n  return extractAmountMinor(meta.bodyText) || extractAmountMinor(rawText);\n}\n\nfunction parseTerm(text) {\n  const m = String(text || '').match(/(\\d+)\\s*(day|days|week|weeks|month|months|year|years)/i);\n  if (!m) return null;\n  const n = parseInt(m[1], 10);\n  const unit = m[2].toLowerCase();\n  let t;\n  if (unit.indexOf('year') === 0) t = n * 12;\n  else if (unit.indexOf('month') === 0) t = n;\n  else if (unit.indexOf('week') === 0) t = Math.ceil(n / 4);\n  else t = Math.ceil(n / 30);\n  return Math.min(60, Math.max(1, t));\n}\n\nfunction termMonthsFromMessage() {\n  const fromBody = parseTerm(meta.bodyText);\n  if (fromBody !== null) return fromBody;\n  const fromRaw = parseTerm(rawText);\n  if (fromRaw !== null) return fromRaw;\n  return 12;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = (meta.bodyText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = amountFromMessage();\n  let destAccount = null;\n  const acctMatch = (meta.bodyText || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = (meta.bodyText || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  loanDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountFromMessage(), term_months: termMonthsFromMessage() };\n} else if (intent === 'DEPOSIT') {\n  depositDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountFromMessage() };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: original.profile_id,\n    full_name: original.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
+      },
       "id": "14199e74-d0c7-4b41-9fcb-61903441cc91",
       "name": "Finalize LLM-Classified Intent",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3080,
-        280
-      ],
-      "parameters": {
-        "jsCode": "const original = $('Classify Intent & Authorize Request').item.json;\nconst validLabels = ['JOINT_OPEN','OPEN_ACCOUNT','DISPUTE','LOAN_APPLICATION','DEPOSIT','STANDING_ORDER','TRANSFER','BALANCE','POLICY_RAG','UNAUTHORIZED_ACCESS','UNKNOWN'];\n\nlet intent = String(($json.output || $json.text || '')).trim().toUpperCase().replace(/[^A-Z_]/g, '');\nif (!validLabels.includes(intent)) intent = 'UNKNOWN';\n\nconst meta = { fromEmail: original.fromEmail, subject: original.subject, bodyText: original.bodyText, messageId: original.messageId };\nconst authorizedAccounts = original.authorizedAccounts || [];\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\nfunction extractAmountMinor(text) {\n  const amtMatch = text.match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = (meta.bodyText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = extractAmountMinor(rawText);\n  let destAccount = null;\n  const acctMatch = (meta.bodyText || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = (meta.bodyText || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  const amountMinor = extractAmountMinor(rawText);\n  let termMonths = 12;\n  const termMatch = rawText.match(/(\\d+)\\s*(month|months|year|years)/i);\n  if (termMatch) {\n    const n = parseInt(termMatch[1], 10);\n    termMonths = /year/i.test(termMatch[2]) ? n * 12 : n;\n  }\n  loanDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountMinor, term_months: termMonths };\n} else if (intent === 'DEPOSIT') {\n  const amountMinor = extractAmountMinor(rawText);\n  depositDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountMinor };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: original.profile_id,\n    full_name: original.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
-      }
+        3088,
+        288
+      ]
     },
     {
-      "id": "4a1b85a6-2324-430a-9dcd-d107ea303ce0",
-      "name": "New Sender Regex Uncertain?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        2240,
-        0
-      ],
       "parameters": {
         "conditions": {
           "options": {
@@ -2451,23 +2442,31 @@
           ]
         },
         "options": {}
-      }
+      },
+      "id": "4a1b85a6-2324-430a-9dcd-d107ea303ce0",
+      "name": "New Sender Regex Uncertain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2240,
+        0
+      ]
     },
     {
-      "id": "c5424b56-21eb-453f-b6d2-8a344321a65c",
-      "name": "Groq Chat Model (New Sender Classifier)",
-      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
-      "typeVersion": 1,
-      "position": [
-        2520,
-        200
-      ],
       "parameters": {
         "model": "openai/gpt-oss-safeguard-20b",
         "options": {
           "temperature": 0.1
         }
       },
+      "id": "c5424b56-21eb-453f-b6d2-8a344321a65c",
+      "name": "Groq Chat Model (New Sender Classifier)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        2528,
+        208
+      ],
       "credentials": {
         "groqApi": {
           "id": "f0I08FemfuBnyTu1",
@@ -2476,24 +2475,26 @@
       }
     },
     {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
+        "options": {
+          "systemMessage": "This email is from someone who is NOT yet a bank customer. Read the body (authoritative) and subject, then respond with EXACTLY ONE WORD: OPEN_ACCOUNT, POLICY, or OTHER.\n\nOPEN_ACCOUNT: any wording for wanting to open/create/start/set up a personal bank account, sign up, register, or become a customer.\nPOLICY: asking a question about the bank's fees, limits, rules, policies, hours, or services -- they do not need an account to ask this.\nOTHER: anything else (spam, small talk, unrelated topic, or a request like a transfer/balance check that a non-customer cannot do).\n\nDo not explain. Do not add punctuation. Output only the single word."
+        }
+      },
       "id": "676beaa9-940a-4f35-9260-ff24f78fcfb1",
       "name": "Classify New Sender Intent via LLM",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 3.1,
       "position": [
-        2520,
+        2528,
         0
-      ],
-      "parameters": {
-        "promptType": "define",
-        "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
-        "hasOutputParser": false,
-        "options": {
-          "systemMessage": "This email is from someone who is NOT yet a bank customer. Read the body (authoritative) and subject, then respond with EXACTLY ONE WORD: OPEN_ACCOUNT, POLICY, or OTHER.\n\nOPEN_ACCOUNT: any wording for wanting to open/create/start/set up a personal bank account, sign up, register, or become a customer.\nPOLICY: asking a question about the bank's fees, limits, rules, policies, hours, or services -- they do not need an account to ask this.\nOTHER: anything else (spam, small talk, unrelated topic, or a request like a transfer/balance check that a non-customer cannot do).\n\nDo not explain. Do not add punctuation. Output only the single word."
-        }
-      }
+      ]
     },
     {
+      "parameters": {
+        "jsCode": "const original = $('Extract New Sender Intent').item.json;\nconst raw = String(($json.output || $json.text || '')).trim().toUpperCase().replace(/[^A-Z]/g, '');\n\nconst wantsOpen = raw === 'OPEN_ACCOUNT' || raw === 'OPENACCOUNT';\nconst wantsPolicy = raw === 'POLICY';\n\nreturn [{\n  json: {\n    wantsOpen,\n    wantsPolicy,\n    fullName: original.fullName,\n    accountType: original.accountType,\n    fromEmail: original.fromEmail,\n    subject: original.subject,\n    bodyText: original.bodyText\n  }\n}];"
+      },
       "id": "535f64bc-dc9d-40c1-9db7-c6be9b56b2bb",
       "name": "Apply New Sender LLM Intent",
       "type": "n8n-nodes-base.code",
@@ -2501,9 +2502,1803 @@
       "position": [
         2800,
         0
+      ]
+    },
+    {
+      "id": "07fd122e-4ba8-4f3a-899c-ceedc1951525",
+      "name": "Detect Reference Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -200
       ],
       "parameters": {
-        "jsCode": "const original = $('Extract New Sender Intent').item.json;\nconst raw = String(($json.output || $json.text || '')).trim().toUpperCase().replace(/[^A-Z]/g, '');\n\nconst wantsOpen = raw === 'OPEN_ACCOUNT' || raw === 'OPENACCOUNT';\nconst wantsPolicy = raw === 'POLICY';\n\nreturn [{\n  json: {\n    wantsOpen,\n    wantsPolicy,\n    fullName: original.fullName,\n    accountType: original.accountType,\n    fromEmail: original.fromEmail,\n    subject: original.subject,\n    bodyText: original.bodyText\n  }\n}];"
+        "jsCode": "// Every email the bank sends that needs a human answer carries a short reference\n// code. When that human replies, the code comes back to us and tells us exactly\n// which pending decision this is. Three families:\n//   OPS-xxxxxxxx  a bank decision, only the ops mailbox may answer it\n//   JNT-xxxxxxxx  a joint-account action, only a holder may answer it (checked in SQL)\n//   MIN-xxxxxxxx  a guardian consent, only the named guardian may answer it (checked in SQL)\n\nconst OPS_TEAM_EMAIL = 'ops-team@yourbank.example';\n\nconst meta = $input.first().json;\nconst from = String(meta.fromEmail || '').toLowerCase().trim();\nconst subject = String(meta.subject || '');\nconst body = String(meta.bodyText || '');\n\nconst passthrough = Object.assign({}, meta, {\n  isRefReply: false,\n  refKind: null,\n  refCode: null,\n  decision: null,\n  opsNote: null,\n  opsTeamEmail: OPS_TEAM_EMAIL\n});\n\nconst refMatch = (subject + '\\n' + body).match(/\\b(OPS|JNT|MIN)-([A-Za-z0-9]{8})\\b/);\nif (!refMatch) {\n  return [{ json: passthrough }];\n}\n\nconst prefix = refMatch[1].toUpperCase();\nconst refCode = prefix + '-' + refMatch[2].toUpperCase();\nlet refKind = prefix === 'OPS' ? 'ops' : (prefix === 'JNT' ? 'joint' : 'minor');\n\n// An OPS code is only actionable when it comes from the ops mailbox itself.\n// Anyone else quoting the code back at us is just a normal customer email.\nif (refKind === 'ops' && from !== OPS_TEAM_EMAIL) {\n  return [{ json: passthrough }];\n}\n\n// Gmail quotes the original message in a reply, so the decision must be read from\n// what the person actually typed -- everything above the first quote marker.\nlet ownText = body;\nconst cutMarkers = [/^\\s*On .+wrote:\\s*$/m, /^\\s*>/m, /^-{2,}\\s*Original Message/im, /^\\s*_{10,}\\s*$/m, /^\\s*={3,}BANKING-OPS-ACTION/m];\nfor (const marker of cutMarkers) {\n  const hit = ownText.match(marker);\n  if (hit && hit.index !== undefined && hit.index >= 0) ownText = ownText.slice(0, hit.index);\n}\n\n// An explicit NOTE: line lets ops attach a rejection reason or an edited answer.\nlet opsNote = null;\nconst noteMatch = ownText.match(/^\\s*NOTE\\s*:\\s*([\\s\\S]+)$/im);\nif (noteMatch) {\n  opsNote = noteMatch[1].trim() || null;\n  ownText = ownText.slice(0, noteMatch.index);\n}\n\nconst decisionText = (subject + '\\n' + ownText);\nconst saysApprove = /\\b(approve|approved|approves|accept|accepted|authorise|authorised|authorize|authorized|yes|agreed|confirm|confirmed)\\b/i.test(decisionText);\nconst saysReject  = /\\b(reject|rejected|rejects|decline|declined|deny|denied|refuse|refused|no|disagree)\\b/i.test(decisionText);\n\nlet decision = null;\nif (saysApprove && !saysReject) decision = 'approve';\nelse if (saysReject && !saysApprove) decision = 'reject';\n\n// Both words, or neither: we must NOT guess. Passing \"not approve\" through as a\n// rejection would silently kill a pending request because someone replied\n// \"no problem, thanks\". Route to a clarification email instead and leave the\n// request untouched and still pending.\nif (decision === null) {\n  refKind = 'unclear';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  isRefReply: true,\n  refKind,\n  refCode,\n  decision,\n  opsNote,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
+      }
+    },
+    {
+      "id": "973871fa-dc1c-486d-8b48-5dce2d3bf69f",
+      "name": "Is Reference Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "is-ref-reply",
+              "leftValue": "={{ $json.isRefReply }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "68d7f377-79be-4971-b0da-599ae5e7a641",
+      "name": "Route Reference Kind",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1120,
+        -340
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ref-ops",
+                    "leftValue": "={{ $json.refKind }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "ops"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Ops Decision"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ref-joint",
+                    "leftValue": "={{ $json.refKind }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "joint"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Joint Consent"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ref-minor",
+                    "leftValue": "={{ $json.refKind }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "minor"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Guardian Consent"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Unclear Decision"
+        }
+      }
+    },
+    {
+      "id": "79fca1fd-d734-437e-b722-f479ba8c2600",
+      "name": "Resolve Ops Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        -480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/resolve_ops_approval",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $json.refCode, p_decision: $json.decision || 'unclear', p_decided_by_email: $json.fromEmail, p_note: $json.opsNote }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "a83af840-b5ae-4624-b4e1-3ec1dcd4c052",
+      "name": "Ops Decision Applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        -480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ops-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "cf38569b-03d9-49a4-a16b-adea318e1173",
+      "name": "Route Ops Decision Outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1960,
+        -620
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "loan-yes-type",
+                    "leftValue": "={{ $json.request_type }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "loan"
+                  },
+                  {
+                    "id": "loan-yes-dec",
+                    "leftValue": "={{ $json.decision }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "approve"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Loan Approved"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "loan-no-type",
+                    "leftValue": "={{ $json.request_type }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "loan"
+                  },
+                  {
+                    "id": "loan-no-dec",
+                    "leftValue": "={{ $json.decision }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "reject"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Loan Rejected"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "draft-yes-type",
+                    "leftValue": "={{ $json.request_type }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "support_draft"
+                  },
+                  {
+                    "id": "draft-yes-dec",
+                    "leftValue": "={{ $json.decision }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "approve"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Policy Answer Approved"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "No Customer Email Needed"
+        }
+      }
+    },
+    {
+      "id": "23184683-88b4-4313-be28-3c663e5339b7",
+      "name": "Send Loan Approved Email (Ops Decision)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        -760
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "=Your loan application has been approved",
+        "emailType": "text",
+        "message": "=Hello {{ $json.payload.applicant_name || 'there' }},\n\nGood news - your loan application has been approved by our credit review team.\n\nPrincipal: Rs {{ ($json.payload.principal_amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($json.payload.total_repayable / 100).toFixed(2) }}\nTerm: {{ $json.payload.term_months }} month{{ $json.payload.term_months === 1 ? '' : 's' }}\nMonthly repayment: Rs {{ ($json.payload.monthly_payment_amount / 100).toFixed(2) }}\n\nThe funds have been credited to your account and a monthly repayment standing order has been set up automatically. Reply to this email if you have any questions.\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "02f8b354-3988-436a-a9b3-b82be4c85112",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "80d36db2-c5fa-4273-a518-8cb64b9ba816",
+      "name": "Send Loan Rejected Email (Ops Decision)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        -620
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "=Your loan application",
+        "emailType": "text",
+        "message": "=Hello {{ $json.payload.applicant_name || 'there' }},\n\nThank you for your loan application. After review, we are not able to approve it at this time.\n\nReason: {{ $json.decision_note || 'Declined by the credit review team.' }}\n\nYou are welcome to apply again in future, or reply to this email if you would like to discuss it.\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "904ccd58-7de7-4602-a2c2-a3196bb0f73e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "4c3bbd5a-dc1d-4bb9-8307-d7d763d31066",
+      "name": "Send Reviewed Policy Answer to Customer",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        -480
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "=RE: {{ $json.result.case_subject }}",
+        "emailType": "text",
+        "message": "=Hello,\n\nThank you for your patience. Here is the answer to your enquiry, reviewed and approved by one of our specialists:\n\n{{ $json.result.answer_text }}\n\nIf anything is still unclear, just reply to this email.\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "8bcd622b-c29b-4568-b4b1-f9058537e499",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "0cb51d37-b1ff-41eb-9f97-aa9cbfa1ff45",
+      "name": "Confirm Decision to Ops Team",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2520,
+        -620
+      ],
+      "parameters": {
+        "sendTo": "ops-team@yourbank.example",
+        "subject": "=Recorded: {{ $('Resolve Ops Approval').item.json.ref_code }} {{ $('Resolve Ops Approval').item.json.decision }}d",
+        "emailType": "text",
+        "message": "=Your decision has been applied.\n\nReference: {{ $('Resolve Ops Approval').item.json.ref_code }}\nRequest: {{ $('Resolve Ops Approval').item.json.subject }}\nDecision: {{ ($('Resolve Ops Approval').item.json.decision || '').toUpperCase() }}\nFinal status: {{ $('Resolve Ops Approval').item.json.status }}\nCustomer notified: {{ $('Resolve Ops Approval').item.json.customer_email }}\n{{ $('Resolve Ops Approval').item.json.decision_note ? 'Your note: ' + $('Resolve Ops Approval').item.json.decision_note : '' }}\n\nThis reference is now closed and cannot be decided again.\n\nDigital Bank Automation",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "70fd4b6c-ef40-4238-9dfb-e16761c7e999",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "4b0b1153-2803-4976-abbe-fc3f17a77364",
+      "name": "Send Ops Decision Problem Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1960,
+        -340
+      ],
+      "parameters": {
+        "sendTo": "ops-team@yourbank.example",
+        "subject": "=Could not apply your decision - {{ $('Detect Reference Reply').item.json.refCode }}",
+        "emailType": "text",
+        "message": "=We could not apply the decision in your last reply.\n\nReference: {{ $('Detect Reference Reply').item.json.refCode }}\nDecision read from your reply: {{ $('Detect Reference Reply').item.json.decision || '(could not tell)' }}\nReason: {{ $json.error }}\n\nTo decide this request, reply to the original alert with the word APPROVE or the word REJECT on its own line, keeping the reference code in the message. Use exactly one of the two words - a reply containing both cannot be read.\n\nOptionally add a line starting with NOTE: to attach a reason or an edited answer.\n\nDigital Bank Automation",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "3ce4cbe9-0003-46c6-9e54-119250ef4626",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "170724d9-de6d-44f1-b2d3-7864bcf3672b",
+      "name": "Account Opening Eligibility",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2800,
+        -60
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "no-dob",
+                    "leftValue": "={{ $json.dateOfBirth }}",
+                    "operator": {
+                      "operation": "notExists",
+                      "singleValue": true,
+                      "type": "string"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Needs Date Of Birth"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "minor-a",
+                    "leftValue": "={{ $json.isMinor }}",
+                    "operator": {
+                      "operation": "true",
+                      "singleValue": true,
+                      "type": "boolean"
+                    },
+                    "rightValue": true
+                  },
+                  {
+                    "id": "minor-no-guardian",
+                    "leftValue": "={{ $json.guardianEmail }}",
+                    "operator": {
+                      "operation": "notExists",
+                      "singleValue": true,
+                      "type": "string"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Minor Without Guardian"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "minor-b",
+                    "leftValue": "={{ $json.isMinor }}",
+                    "operator": {
+                      "operation": "true",
+                      "singleValue": true,
+                      "type": "boolean"
+                    },
+                    "rightValue": true
+                  },
+                  {
+                    "id": "minor-with-guardian",
+                    "leftValue": "={{ $json.guardianEmail }}",
+                    "operator": {
+                      "operation": "exists",
+                      "singleValue": true,
+                      "type": "string"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Minor With Guardian"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Adult"
+        }
+      }
+    },
+    {
+      "id": "891d9cb8-ef94-4ec8-89dc-9ef0c8fa3fd0",
+      "name": "Send Date Of Birth Required Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3080,
+        -200
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=RE: {{ $json.subject }} - one more detail needed",
+        "emailType": "text",
+        "message": "=Hello {{ $json.fullName }},\n\nThanks for getting in touch about opening an account. Before we can open it we need your date of birth - it is a regulatory requirement and it also decides whether the account needs a guardian.\n\nJust reply with a line like:\n\n    Date of birth: 1998-04-22\n\nWe accept 1998-04-22, 22/04/1998 or 22 April 1998.\n\nIf you are under 18, please also include your parent or guardian's email address, for example:\n\n    Guardian: parent@example.com\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "02495dc4-08de-4f03-9686-20cc000333e6",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "2f58ec5f-07f3-4c4c-b138-fee1b0e1b8ac",
+      "name": "Send Guardian Email Required Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3080,
+        -60
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=RE: {{ $json.subject }} - a guardian needs to approve this",
+        "emailType": "text",
+        "message": "=Hello {{ $json.fullName }},\n\nThank you for your interest in opening an account with us.\n\nFrom the date of birth you gave ({{ $json.dateOfBirth }}) you are {{ $json.ageYears }}. We can absolutely open an account for you, but because you are under 18 it has to be a guardian-supervised account: a parent or guardian must approve it and they are the only one who can move money out of it. You will be able to see the balance and receive money, and the account converts to full adult access automatically on your 18th birthday.\n\nPlease reply with your parent or guardian's email address, for example:\n\n    Guardian: parent@example.com\n\nWe will then email them to ask for their approval.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "aca54027-3a6b-4501-9cf2-fd66b8a24784",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "6c6e5405-bde3-4bf3-8022-8befc2367fe5",
+      "name": "Request Minor Account",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/request_minor_account",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_applicant_email: $json.fromEmail, p_applicant_name: $json.fullName, p_date_of_birth: $json.dateOfBirth, p_guardian_email: $json.guardianEmail, p_account_type: $json.accountType === 'checking' ? 'savings' : $json.accountType, p_currency: 'PKR' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "aa78334e-cbb0-46e4-80ee-7367ff4c6a47",
+      "name": "Minor Request Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "minor-req-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ae0e1953-3e6c-4cce-906b-cff262a1f97f",
+      "name": "Ask Guardian For Consent",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3640,
+        20
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Extract New Sender Intent').item.json.guardianEmail }}",
+        "subject": "=[{{ $json.ref_code }}] Approval needed: {{ $('Extract New Sender Intent').item.json.fullName }} wants to open a bank account",
+        "emailType": "text",
+        "message": "={{ $('Extract New Sender Intent').item.json.fullName }} ({{ $('Extract New Sender Intent').item.json.fromEmail }}) has asked us to open a bank account and named you as their parent or guardian.\n\nApplicant: {{ $('Extract New Sender Intent').item.json.fullName }}\nEmail: {{ $('Extract New Sender Intent').item.json.fromEmail }}\nDate of birth: {{ $('Extract New Sender Intent').item.json.dateOfBirth }} (age {{ $json.age_years }})\nAccount type: savings, in PKR\n\nBecause they are under 18, the account can only be opened with your approval. If you approve:\n\n  - you are added to the account as the guardian\n  - only you can transfer money out of it\n  - they can see the balance and receive money\n  - the account converts to full adult access automatically on their 18th birthday\n\nHOW TO ANSWER\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both.\n\nIf you did not expect this email, reply REJECT and we will not open the account. This request expires in 7 days.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "231f3d6d-fd38-46c4-b1ff-8a735b24814b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "31074bb8-0e60-46f1-9b4f-8b82d59ac83b",
+      "name": "Tell Applicant Guardian Was Asked",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3920,
+        20
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Extract New Sender Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Extract New Sender Intent').item.json.subject }} - waiting for your guardian",
+        "emailType": "text",
+        "message": "=Hello {{ $('Extract New Sender Intent').item.json.fullName }},\n\nBecause you are under 18, we have emailed {{ $('Extract New Sender Intent').item.json.guardianEmail }} to ask them to approve the account.\n\nAs soon as they reply to approve it, we will open your savings account and email you the account number. Nothing else is needed from you for now.\n\nIf they do not reply within 7 days the request expires and you can simply ask again.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "a39e2e46-aee3-46a1-a75b-80f5285356d7",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "44d44a15-7524-4c40-8b96-55adc6a74eee",
+      "name": "Send Minor Request Failed Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3640,
+        160
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Extract New Sender Intent').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Extract New Sender Intent').item.json.subject }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Extract New Sender Intent').item.json.fullName }},\n\nWe could not start your account application.\n\nReason: {{ $json.error }}\n\nPlease reply with the corrected details and we will try again.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "c87e788d-2327-44f1-ba9b-46ff73aba4db",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "4f23c4f6-facc-48c6-9643-2cd3647143b5",
+      "name": "Respond To Guardian Consent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        -60
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/respond_to_minor_account_request",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $json.refCode, p_responder_email: $json.fromEmail, p_accept: $json.decision === 'approve' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "82554d63-b67e-4097-a124-743a2e8dee35",
+      "name": "Guardian Consent Recorded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        -60
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "gc-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b4b4ff65-9482-444d-b412-defb7cf0a559",
+      "name": "Send Guardian Consent Problem Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1960,
+        80
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.fromEmail }}",
+        "subject": "=We could not record your answer - {{ $('Detect Reference Reply').item.json.refCode }}",
+        "emailType": "text",
+        "message": "=We could not record your answer to guardian consent request {{ $('Detect Reference Reply').item.json.refCode }}.\n\nReason: {{ $json.error }}\n\nTo answer, reply to the original request with the single word APPROVE or the single word REJECT, keeping the reference code in the message. Your reply must contain one of those two words, not both.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "b6fbc294-bdd6-4b7f-aceb-0ab54e9a7dcd",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "5db466b4-b475-40f0-80fd-8bc07c99c9a3",
+      "name": "Guardian Approved Account?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1960,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "gc-accepted",
+              "leftValue": "={{ $json.accepted }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "aebc929d-3e7f-467e-9e4f-5530587ad55c",
+      "name": "Send Minor Account Declined Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        -60
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.applicant_email }}",
+        "subject": "=About your account application",
+        "emailType": "text",
+        "message": "=Hello {{ $json.applicant_name }},\n\nYour parent or guardian ({{ $json.guardian_email }}) has declined the request to open an account for you, so we have not opened one.\n\nIf you think this was a mistake, please speak to them directly and then email us again.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "edafa4ab-fb1f-4eb6-8554-7142179b9c06",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "69de088c-8f07-41b1-8026-8b4c8ebc3f06",
+      "name": "Create Auth User for Minor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        -340
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/auth/v1/admin/users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: $json.applicant_email, email_confirm: true, user_metadata: { full_name: $json.applicant_name } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "1932ea7b-6972-42a7-a261-4c492a3528ef",
+      "name": "Create Auth User for Guardian",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2520,
+        -340
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/auth/v1/admin/users",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "jsonBody": "={{ (() => { const r = $('Respond To Guardian Consent').item.json; const raw = String($('Detect Reference Reply').item.json.rawFrom || ''); const m = raw.match(/^\"?([^\"<]+?)\"?\\s*</); const name = (m && m[1].trim()) ? m[1].trim() : r.guardian_email.split('@')[0]; return JSON.stringify({ email: r.guardian_email, email_confirm: true, user_metadata: { full_name: name } }); })() }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "bdbf8507-528f-441f-b091-d6a8fd1d7f25",
+      "name": "Fetch Minor And Guardian Profiles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2800,
+        -340
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/profiles?select=id,email&or=(email.eq.' + $('Respond To Guardian Consent').item.json.applicant_email + ',email.eq.' + $('Respond To Guardian Consent').item.json.guardian_email + ')' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "b683728e-6253-49ca-ad88-6b0e74de1b63",
+      "name": "Resolve Minor Account Profile Ids",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        -340
+      ],
+      "parameters": {
+        "jsCode": "// Both auth-user creations run with neverError, so an address that was already a\n// customer simply comes back as an error we ignore. The authoritative mapping is\n// this profiles lookup, which covers both the newly created and the pre-existing case.\nconst consent = $('Respond To Guardian Consent').first().json;\nconst rows = $input.all().map(i => i.json).filter(r => r && r.id && r.email);\n\nfunction idFor(email) {\n  const hit = rows.find(r => String(r.email).toLowerCase() === String(email).toLowerCase());\n  return hit ? hit.id : null;\n}\n\nconst minorProfileId = idFor(consent.applicant_email);\nconst guardianProfileId = idFor(consent.guardian_email);\n\nreturn [{ json: {\n  ref_code: consent.ref_code,\n  applicant_email: consent.applicant_email,\n  applicant_name: consent.applicant_name,\n  guardian_email: consent.guardian_email,\n  minor_profile_id: minorProfileId,\n  guardian_profile_id: guardianProfileId,\n  profiles_resolved: Boolean(minorProfileId && guardianProfileId)\n} }];"
+      }
+    },
+    {
+      "id": "f2b30e52-22b8-47a6-85e6-97ff2057ac1a",
+      "name": "Finalize Minor Account Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        -340
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/finalize_minor_account_request",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $json.ref_code, p_minor_profile_id: $json.minor_profile_id, p_guardian_profile_id: $json.guardian_profile_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "56c294bd-ab9d-4713-a152-f9ba72f92bbe",
+      "name": "Minor Account Opened?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3640,
+        -340
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "minor-opened",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d5dca045-74f6-4c15-93a7-7bdb8f48254c",
+      "name": "Send Minor Account Opened Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3920,
+        -420
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.applicant_email }}",
+        "subject": "=Your account is open - {{ $json.account_number }}",
+        "emailType": "text",
+        "message": "=Hello {{ $json.applicant_name }},\n\nYour guardian has approved the account and it is now open.\n\nAccount number: {{ $json.account_number }}\nType: {{ $json.account_type }} (PKR)\nOpening balance: Rs 0.00\n\nBecause you are under 18 this is a guardian-supervised account:\n\n  - you can check the balance any time by emailing us\n  - you can receive money into it\n  - only {{ $json.guardian_email }} can transfer money out of it\n  - on {{ $json.turns_18_on }} it converts automatically to full adult access\n\nJust reply to this email whenever you need anything.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "27dbfc21-83de-455c-92f8-961790a75542",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "0cc30068-6bb5-46cd-a26d-f8e838285741",
+      "name": "Confirm Minor Account To Guardian",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4200,
+        -420
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Finalize Minor Account Request').item.json.guardian_email }}",
+        "subject": "=Approved - {{ $('Finalize Minor Account Request').item.json.applicant_name }}'s account {{ $('Finalize Minor Account Request').item.json.account_number }}",
+        "emailType": "text",
+        "message": "=Thank you for approving the account.\n\nAccount holder: {{ $('Finalize Minor Account Request').item.json.applicant_name }} ({{ $('Finalize Minor Account Request').item.json.applicant_email }})\nAccount number: {{ $('Finalize Minor Account Request').item.json.account_number }}\nType: {{ $('Finalize Minor Account Request').item.json.account_type }} (PKR)\n\nYou are registered as the guardian on this account. In practice that means:\n\n  - you are the only person who can transfer money out of it\n  - they can check the balance and receive money\n  - the account converts to full adult access on {{ $('Finalize Minor Account Request').item.json.turns_18_on }}, after which your guardian control ends\n\nTo move money, email us from this address with the amount and the destination account number.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "ddb0689d-8d38-4e6d-b37f-0eaa419282e8",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "e072c816-84f9-4c6e-a3eb-38651cbc99e1",
+      "name": "Send Minor Account Open Failed Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3920,
+        -260
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.fromEmail }}",
+        "subject": "=We could not open the account - {{ $('Detect Reference Reply').item.json.refCode }}",
+        "emailType": "text",
+        "message": "=Your approval was recorded, but we could not finish opening the account.\n\nReference: {{ $('Detect Reference Reply').item.json.refCode }}\nReason: {{ $json.error }}\n\nOur team has this on record and will follow up. No account has been opened and no money has moved.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "e7ab97ff-3096-4271-a256-1c6abee84a52",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "b4e97cca-15a4-40bb-8f99-a021f690c124",
+      "name": "Look Up Joint Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/get_joint_action_by_ref",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $json.refCode, p_responder_email: $json.fromEmail }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "c71fe0fd-975c-4e07-b57a-080881a9b3c8",
+      "name": "Joint Action Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ja-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "58494d50-d4c3-41d9-a38d-e8cac33c2b14",
+      "name": "Joint Transfer Needs Fraud Check?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1960,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "needs-fraud",
+              "leftValue": "={{ $json.needs_fraud_assessment }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "is-approve",
+              "leftValue": "={{ $('Detect Reference Reply').item.json.decision }}",
+              "rightValue": "approve",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "81d35500-10f7-4cb1-a6d8-e841676c746a",
+      "name": "Fraud Check Joint Transfer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        80
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://' + ($vars.PYTHON_SERVICE_URL || 'bankingsystemhackathon-production.up.railway.app').replace(/^https?:\\/\\//, '') }}/assess-fraud",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ account_id: $json.account_id, amount: $json.amount, currency: $json.currency, profile_id: $json.responder_profile_id, transaction_context: { destination_account_id: $json.payload.destination_account_id, joint_action_ref: $json.ref_code } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      }
+    },
+    {
+      "id": "d6a49c30-b2e0-4dc1-8a88-440e1f7b203a",
+      "name": "Respond To Joint Action (Fraud Checked)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        20
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/respond_to_joint_action_by_ref",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $('Detect Reference Reply').item.json.refCode, p_responder_email: $('Detect Reference Reply').item.json.fromEmail, p_accept: true, p_fraud_assessment_id: $json.fraud_assessment_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "e7879e7b-73c6-4e10-b714-cc001714f918",
+      "name": "Respond To Joint Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        220
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/respond_to_joint_action_by_ref",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_ref_code: $('Detect Reference Reply').item.json.refCode, p_responder_email: $('Detect Reference Reply').item.json.fromEmail, p_accept: $('Detect Reference Reply').item.json.decision === 'approve' }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "f196b7a4-1662-4f6c-a0cd-33bb8084ea55",
+      "name": "Summarize Joint Action Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        160
+      ],
+      "parameters": {
+        "jsCode": "// One place to turn every possible joint-action outcome into plain language, so\n// the email nodes below stay simple. Four distinct outcomes:\n//   declined by this holder / still waiting on others / executed / execution failed\nconst r = $input.first().json;\nconst reply = $('Detect Reference Reply').first().json;\nconst accepted = reply.decision === 'approve';\n\nconst amount = r.payload && r.payload.amount ? 'Rs ' + (Number(r.payload.amount) / 100).toFixed(2) : null;\nconst what = r.action_type === 'transfer_approval' ? ('a transfer of ' + (amount || 'funds'))\n           : r.action_type === 'close_account' ? 'closing the account'\n           : r.action_type === 'add_holder' ? 'adding a new account holder'\n           : 'this request';\n\nconst pending = Array.isArray(r.pending_holder_emails) ? r.pending_holder_emails : [];\n\nlet headline, detail, notifyRequester = true;\n\nif (!accepted || r.status === 'rejected') {\n  headline = 'Request ' + r.ref_code + ' has been declined';\n  detail = 'You declined ' + what + ' on account ' + (r.account_number || '') +\n    '. Nothing has been changed and no money has moved. The request is now closed.';\n} else if (r.success === false) {\n  headline = 'Request ' + r.ref_code + ' could not be completed';\n  detail = 'All required signatures were collected, but we could not carry out ' + what +\n    '.\\n\\nReason: ' + (r.error || 'unknown error') +\n    '\\n\\nNothing has been changed and no money has moved. The request stays open, so it can be ' +\n    'retried once the cause is resolved.';\n} else if (r.requires_additional_signatures) {\n  headline = 'Your approval for ' + r.ref_code + ' is recorded';\n  detail = 'Thank you. We still need ' + (r.required - r.consents_count) + ' more approval(s) before ' +\n    what + ' on account ' + (r.account_number || '') + ' can go ahead.' +\n    (pending.length ? '\\n\\nStill to approve: ' + pending.join(', ') : '');\n  notifyRequester = false;\n} else {\n  headline = 'Request ' + r.ref_code + ' is complete';\n  detail = 'All holders have approved, and ' + what + ' on account ' + (r.account_number || '') +\n    ' has been carried out.' +\n    (r.transaction_id ? '\\n\\nTransaction reference: ' + r.transaction_id : '');\n}\n\nreturn [{ json: {\n  headline,\n  detail,\n  ref_code: r.ref_code,\n  responderEmail: r.responder_email || reply.fromEmail,\n  requesterEmail: r.requester_email || null,\n  notifyRequester: notifyRequester && Boolean(r.requester_email) &&\n                   String(r.requester_email).toLowerCase() !== String(r.responder_email || '').toLowerCase()\n} }];"
+      }
+    },
+    {
+      "id": "32e4197a-0744-44c1-bda8-dcfc27529388",
+      "name": "Send Joint Action Outcome Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3080,
+        160
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.responderEmail }}",
+        "subject": "={{ $json.headline }}",
+        "emailType": "text",
+        "message": "=Hello,\n\n{{ $json.detail }}\n\nDigital Bank Joint Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "8dd3edf9-c623-41e4-b1f1-a8c93d253d29",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "6d24a131-5a88-440e-b9de-44998df8d282",
+      "name": "Notify Joint Requester?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "notify-req",
+              "leftValue": "={{ $('Summarize Joint Action Outcome').item.json.notifyRequester }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c5b5204-5df3-47bb-ad25-c7c3e870ff70",
+      "name": "Send Joint Outcome To Requester",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3640,
+        100
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Summarize Joint Action Outcome').item.json.requesterEmail }}",
+        "subject": "={{ $('Summarize Joint Action Outcome').item.json.headline }}",
+        "emailType": "text",
+        "message": "=Hello,\n\nThis is about the request you raised on your joint account.\n\n{{ $('Summarize Joint Action Outcome').item.json.detail }}\n\nDigital Bank Joint Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "e8dccf6d-782b-4c60-9fe2-32f34f0cf47a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "d8112072-277f-4d84-b478-0458e5e1d9e7",
+      "name": "Send Joint Action Problem Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1960,
+        340
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.fromEmail }}",
+        "subject": "=We could not record your answer - {{ $('Detect Reference Reply').item.json.refCode }}",
+        "emailType": "text",
+        "message": "=We could not record your answer to request {{ $('Detect Reference Reply').item.json.refCode }}.\n\nReason: {{ $json.error }}\n\nTo answer, reply to the original request with the single word APPROVE or the single word REJECT, keeping the reference code in the message. Your reply must contain one of those two words, not both.\n\nDigital Bank Joint Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "66e9ae7d-a06c-4515-a25d-9a57967116b5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "3b8f784b-7661-4103-b571-2584cb43e68e",
+      "name": "Transfer Needs Signatures?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5040,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "needs-sigs",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "pending_additional_signatures",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f364ebd6-b262-4dd1-8609-543b4c5262f1",
+      "name": "Send Transfer Awaiting Signatures Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        5320,
+        120
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Resolve Transfer Target & Authorize').item.json.fromEmail }}",
+        "subject": "=Your transfer needs your co-holder's approval - {{ $json.ref_code }}",
+        "emailType": "text",
+        "message": "=Hello {{ $('Resolve Transfer Target & Authorize').item.json.full_name }},\n\nAccount {{ $json.source_account_number }} is set up so that all holders must sign off on a transfer, so we have not moved any money yet.\n\nAmount: Rs {{ ($json.amount / 100).toFixed(2) }}\nTo: {{ $json.destination_account_number }}\nReference: {{ $json.ref_code }}\nApprovals so far: {{ $json.consents_count }} of {{ $json.required }}\n\nWe have emailed {{ ($json.pending_holder_emails || []).join(', ') }} to ask for their approval. As soon as they approve, we run a fresh fraud check and carry out the transfer, then email you the result.\n\nIf nobody approves by {{ $json.expires_at }} the request expires and no money moves.\n\nDigital Bank Payments",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "b0d8ee1f-651e-4264-a4f9-d6acec1c2ee5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "d46d3fd8-96b8-4067-b3ed-1036d1ff07b3",
+      "name": "Split Pending Co-Holders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5320,
+        260
+      ],
+      "parameters": {
+        "jsCode": "// One output item per holder who still has to sign, so the Gmail node below\n// sends them an individual request rather than one email to everyone.\nconst r = $('Transfer Needs Signatures?').first().json;\nconst emails = Array.isArray(r.pending_holder_emails) ? r.pending_holder_emails : [];\nreturn emails.filter(Boolean).map(email => ({ json: {\n  holderEmail: email,\n  ref_code: r.ref_code,\n  amount: r.amount,\n  source_account_number: r.source_account_number,\n  destination_account_number: r.destination_account_number,\n  requester_name: r.requester_name,\n  expires_at: r.expires_at\n} }));"
+      }
+    },
+    {
+      "id": "d8b43e4e-07cf-42ee-8013-7881fcb9a48f",
+      "name": "Ask Co-Holder To Sign",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        5600,
+        260
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.holderEmail }}",
+        "subject": "=[{{ $json.ref_code }}] Your approval is needed for a transfer of Rs {{ ($json.amount / 100).toFixed(2) }}",
+        "emailType": "text",
+        "message": "=Hello,\n\n{{ $json.requester_name }} has asked us to make a transfer from your joint account {{ $json.source_account_number }}. That account is set up so every holder must approve a transfer, so nothing has moved yet.\n\nAmount: Rs {{ ($json.amount / 100).toFixed(2) }}\nFrom: {{ $json.source_account_number }}\nTo: {{ $json.destination_account_number }}\nRequested by: {{ $json.requester_name }}\n\nHOW TO ANSWER\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both.\n\nIf you approve, we run a fresh fraud check and then carry out the transfer. If you reject, the request is closed immediately and no money moves. If nobody answers by {{ $json.expires_at }} the request expires on its own.\n\nIf you did not expect this, reply REJECT.\n\nDigital Bank Joint Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "96055e40-a73e-4948-9193-7c0851f91f7c",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "3c43ca26-446e-4629-a58e-6be260d37fbf",
+      "name": "Send Unclear Decision Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1400,
+        -620
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=We could not read your answer - {{ $json.refCode }}",
+        "emailType": "text",
+        "message": "=Hello,\n\nWe received your reply about request {{ $json.refCode }}, but we could not tell whether you meant to approve it or to reject it, so we have not changed anything. The request is still open and waiting for your answer.\n\nPlease reply again with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nUse exactly one of those two words - a reply containing both, or neither, cannot be read automatically.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "779ce721-3cdb-4824-829b-a9c8867e5572",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "252f381e-2be6-4639-9b7f-88573e71fc61",
+      "name": "Joint Transfer Fraud Cleared?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2380,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "jt-fraud-ok",
+              "leftValue": "={{ $json.approved }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "jt-fraud-id",
+              "leftValue": "={{ $json.fraud_assessment_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b9d7cafa-061a-4e99-9534-e058ae639a3a",
+      "name": "Send Joint Transfer Fraud Blocked Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2660,
+        220
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.fromEmail }}",
+        "subject": "=Transfer {{ $('Detect Reference Reply').item.json.refCode }} was stopped by our fraud checks",
+        "emailType": "text",
+        "message": "=Hello,\n\nThank you for approving request {{ $('Detect Reference Reply').item.json.refCode }}. Before carrying out a transfer we re-run our fraud checks, and this one did not clear them, so no money has moved.\n\nReason: {{ $json.reason || 'The transaction was flagged by our fraud screening.' }}\n\nYour approval has not been recorded as a rejection - the request is still open. Our team has been alerted and will look into it. If you were expecting this transfer to go through, just reply to this email and we will follow up.\n\nDigital Bank Joint Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "a1152031-ecab-490e-8741-2a1bdd554c4a",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "efd20c56-2560-46e7-a648-109f191ef656",
+      "name": "Alert Ops - Joint Transfer Fraud Block",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2940,
+        220
+      ],
+      "parameters": {
+        "sendTo": "ops-team@yourbank.example",
+        "subject": "=Fraud screen blocked a fully-signed joint transfer - {{ $('Detect Reference Reply').item.json.refCode }}",
+        "emailType": "text",
+        "message": "=A both-signature transfer collected all its approvals, but the fraud re-check at execution time did not clear it, so nothing was moved.\n\nReference: {{ $('Detect Reference Reply').item.json.refCode }}\nAccount: {{ $('Look Up Joint Action').item.json.account_number }}\nAmount: Rs {{ ($('Look Up Joint Action').item.json.amount / 100).toFixed(2) }}\nApproved by: {{ $('Detect Reference Reply').item.json.fromEmail }}\nRisk score: {{ $('Fraud Check Joint Transfer').item.json.risk_score }}\nReason: {{ $('Fraud Check Joint Transfer').item.json.reason }}\n\nThe joint request is still pending, so it can be retried once this is understood. No ops reply is needed on this email.\n\nDigital Bank Automation",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "ee863428-e085-4281-8cea-d1f75ad85c17",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
       }
     }
   ],
@@ -2518,17 +4313,6 @@
           },
           {
             "node": "Sweep Expired Joint Invitations",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract Email Metadata": {
-      "main": [
-        [
-          {
-            "node": "Check Pending Joint Invitation",
             "type": "main",
             "index": 0
           }
@@ -2672,17 +4456,6 @@
         ]
       ]
     },
-    "Execute WF-01 Transfer Sub-Workflow": {
-      "main": [
-        [
-          {
-            "node": "Send Transfer Response Email",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Resolve Transfer Target & Authorize": {
       "main": [
         [
@@ -2796,7 +4569,7 @@
       "main": [
         [
           {
-            "node": "Create Auth User for New Customer",
+            "node": "Account Opening Eligibility",
             "type": "main",
             "index": 0
           }
@@ -3339,6 +5112,568 @@
           }
         ]
       ]
+    },
+    "Extract Email Metadata": {
+      "main": [
+        [
+          {
+            "node": "Detect Reference Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Reference Reply": {
+      "main": [
+        [
+          {
+            "node": "Is Reference Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Reference Reply?": {
+      "main": [
+        [
+          {
+            "node": "Route Reference Kind",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Pending Joint Invitation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Reference Kind": {
+      "main": [
+        [
+          {
+            "node": "Resolve Ops Approval",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Look Up Joint Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond To Guardian Consent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unclear Decision Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Ops Approval": {
+      "main": [
+        [
+          {
+            "node": "Ops Decision Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ops Decision Applied?": {
+      "main": [
+        [
+          {
+            "node": "Route Ops Decision Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Ops Decision Problem Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Ops Decision Outcome": {
+      "main": [
+        [
+          {
+            "node": "Send Loan Approved Email (Ops Decision)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Loan Rejected Email (Ops Decision)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reviewed Policy Answer to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirm Decision to Ops Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Loan Approved Email (Ops Decision)": {
+      "main": [
+        [
+          {
+            "node": "Confirm Decision to Ops Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Loan Rejected Email (Ops Decision)": {
+      "main": [
+        [
+          {
+            "node": "Confirm Decision to Ops Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reviewed Policy Answer to Customer": {
+      "main": [
+        [
+          {
+            "node": "Confirm Decision to Ops Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Account Opening Eligibility": {
+      "main": [
+        [
+          {
+            "node": "Send Date Of Birth Required Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Guardian Email Required Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Request Minor Account",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Auth User for New Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Minor Account": {
+      "main": [
+        [
+          {
+            "node": "Minor Request Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Minor Request Created?": {
+      "main": [
+        [
+          {
+            "node": "Ask Guardian For Consent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Minor Request Failed Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Guardian For Consent": {
+      "main": [
+        [
+          {
+            "node": "Tell Applicant Guardian Was Asked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond To Guardian Consent": {
+      "main": [
+        [
+          {
+            "node": "Guardian Consent Recorded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardian Consent Recorded?": {
+      "main": [
+        [
+          {
+            "node": "Guardian Approved Account?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Guardian Consent Problem Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardian Approved Account?": {
+      "main": [
+        [
+          {
+            "node": "Create Auth User for Minor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Minor Account Declined Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Auth User for Minor": {
+      "main": [
+        [
+          {
+            "node": "Create Auth User for Guardian",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Auth User for Guardian": {
+      "main": [
+        [
+          {
+            "node": "Fetch Minor And Guardian Profiles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Minor And Guardian Profiles": {
+      "main": [
+        [
+          {
+            "node": "Resolve Minor Account Profile Ids",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Minor Account Profile Ids": {
+      "main": [
+        [
+          {
+            "node": "Finalize Minor Account Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Minor Account Request": {
+      "main": [
+        [
+          {
+            "node": "Minor Account Opened?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Minor Account Opened?": {
+      "main": [
+        [
+          {
+            "node": "Send Minor Account Opened Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Minor Account Open Failed Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Minor Account Opened Email": {
+      "main": [
+        [
+          {
+            "node": "Confirm Minor Account To Guardian",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look Up Joint Action": {
+      "main": [
+        [
+          {
+            "node": "Joint Action Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Joint Action Found?": {
+      "main": [
+        [
+          {
+            "node": "Joint Transfer Needs Fraud Check?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Joint Action Problem Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Joint Transfer Needs Fraud Check?": {
+      "main": [
+        [
+          {
+            "node": "Fraud Check Joint Transfer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond To Joint Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond To Joint Action (Fraud Checked)": {
+      "main": [
+        [
+          {
+            "node": "Summarize Joint Action Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond To Joint Action": {
+      "main": [
+        [
+          {
+            "node": "Summarize Joint Action Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Joint Action Outcome": {
+      "main": [
+        [
+          {
+            "node": "Send Joint Action Outcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Joint Action Outcome Email": {
+      "main": [
+        [
+          {
+            "node": "Notify Joint Requester?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Joint Requester?": {
+      "main": [
+        [
+          {
+            "node": "Send Joint Outcome To Requester",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute WF-01 Transfer Sub-Workflow": {
+      "main": [
+        [
+          {
+            "node": "Transfer Needs Signatures?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transfer Needs Signatures?": {
+      "main": [
+        [
+          {
+            "node": "Send Transfer Awaiting Signatures Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Transfer Response Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Transfer Awaiting Signatures Email": {
+      "main": [
+        [
+          {
+            "node": "Split Pending Co-Holders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Pending Co-Holders": {
+      "main": [
+        [
+          {
+            "node": "Ask Co-Holder To Sign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fraud Check Joint Transfer": {
+      "main": [
+        [
+          {
+            "node": "Joint Transfer Fraud Cleared?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Joint Transfer Fraud Cleared?": {
+      "main": [
+        [
+          {
+            "node": "Respond To Joint Action (Fraud Checked)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Joint Transfer Fraud Blocked Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Joint Transfer Fraud Blocked Email": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops - Joint Transfer Fraud Block",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -3346,7 +5681,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "bcc628c1-9bf8-4c2c-abdf-0219ace66f54",
+  "versionId": "6458edda-a6fd-440c-a732-b684feaedc82",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

@@ -14,14 +14,18 @@ What this submission includes, what it deliberately leaves out, and why. This is
 - RAG-drafted policy support answers: a grounded, confident (≥0.7) answer is sent straight to the customer; anything else degrades to a mandatory human approval gate (WF-05) instead of guessing. Human review is for what's actually ambiguous, not every request. See `decisions.md` Session 5 and `docs/policies.md`.
 - Gmail as the sole customer-facing channel, both inbound (intent classification from real emails) and outbound (every response path).
 - 15-table Postgres ledger of truth, `SECURITY DEFINER` RPCs as the only financial mutation path, RLS on every table.
+- **Email-driven human approval**: a dedicated ops mailbox receives every decision that needs a person — a loan over Rs 200,000, a policy answer the RAG agent couldn't ground, a fraud freeze — and the operator decides it by replying APPROVE or REJECT to that email. See `decisions.md` Session 9.
+- **Account opening with real details**: date of birth (four accepted formats) and optional phone, stored on the profile. Under 18 routes to guardian consent instead of opening an account.
+- **Minor and guardian accounts**: guardian-acts / minor-views-only, enforced in Postgres, with automatic conversion to full access at 18.
+- **Joint account mandates**: either-or or all-signatures, chosen by the customer in plain English at invitation time, enforced on every transfer; co-holders sign by replying to an email.
 - **Money-in**: a real funding source (`TREASURY-MAIN`, funded from a `BANK-CAPITAL` account, both ledger-backed) instead of every account being permanently stuck at Rs 0.00. Self-service deposits (capped, rate-limited) and loans (flat 10% interest, auto-approved ≤ Rs 200,000, human-reviewed up to Rs 2,000,000) via `apply_for_loan`/`approve_loan`/`reject_loan`/`deposit_funds`. See `decisions.md` Session 7.
 
 ## Explicitly out of scope for this submission
 
 See `decisions.md` for the full reasoning per item. Summary:
 
-- **Minor/guardian accounts and age-based access triggers** — needs a permissions layer that doesn't exist yet (`account_holders.role`, RLS, and every n8n intent handler would all need to branch on it). Real v2 scope.
-- **Either-or vs. both-signature authority configuration, majority-vote governance for 3+ holders, holder removal, adding a holder to an indebted account** — the joint-account model only implements unanimous-consent *closure*; every other multi-holder governance question is unbuilt.
+- ~~**Minor/guardian accounts and age-based access triggers**~~ — **built in Session 9.** Account opening captures a date of birth, an under-18 applicant needs their named guardian to consent by email, only the guardian can move money out, and `promote_minors_to_adult()` restores full access at 18.
+- ~~**Either-or vs. both-signature authority configuration, majority-vote governance for 3+ holders**~~ — **built in Session 9.** The mandate is chosen at invitation time and enforced by `initiate_transfer()`; majority closure for 3+ holders is honoured by `finalize_joint_action_if_complete()`. **Holder removal is still unbuilt**, and adding a holder to an account with active holds exists as `add_account_holder(..., p_acknowledge_active_holds)` but has no customer-facing email intent yet.
 - **Reversal/chargeback into a negative balance** — the schema enforces `balance >= 0` everywhere as a deliberate invariant; a real debt-tracking ledger would need to be a parallel, clearly-labeled structure, not a schema exception.
 - **Weekend/holiday-aware standing order scheduling** — this system settles instantly and internally, so the real-bank problem (waiting for the next business day to clear via interbank rails) doesn't apply the same way. Documented rather than silently ignored.
 - **Interest calculation** — no interest-bearing account type or rate schedule exists.

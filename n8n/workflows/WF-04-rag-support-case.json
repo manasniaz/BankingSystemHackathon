@@ -588,6 +588,72 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "076adb31-cfab-4dac-9a67-0ba9a7d1dad5",
+      "name": "Raise Support Draft Ops Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/create_ops_approval",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_request_type: 'support_draft', p_target_id: $('Save Support Case Draft in Supabase').item.json.id, p_subject: 'Policy answer needs review: ' + ($('Validate Support Request Payload').item.json.params.subject || 'customer enquiry'), p_summary: 'The assistant could not ground this answer confidently, so it has not been sent. Confidence ' + $('Save Support Case Draft in Supabase').item.json.confidence_score + '.', p_payload: { support_case_id: $('Extract Case ID').item.json.case_id, confidence_score: $('Save Support Case Draft in Supabase').item.json.confidence_score, inquiry: $('Validate Support Request Payload').item.json.params.inquiry }, p_requested_for_email: $('Validate Support Request Payload').item.json.params.customer_email }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "db886609-9a38-4598-b127-3799a5b31438",
+      "name": "Alert Ops - Policy Answer Needs Review",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2420,
+        500
+      ],
+      "parameters": {
+        "sendTo": "ops-team@yourbank.example",
+        "subject": "=[{{ $json.ref_code }}] Policy answer needs review",
+        "emailType": "text",
+        "message": "=A customer asked a policy question the assistant could not answer confidently from our policy documents, so nothing has been sent to them.\n\nCustomer: {{ $('Validate Support Request Payload').item.json.params.customer_email }}\nSubject: {{ $('Validate Support Request Payload').item.json.params.subject }}\nCase reference: {{ $('Extract Case ID').item.json.case_id }}\nConfidence: {{ $('Save Support Case Draft in Supabase').item.json.confidence_score }}\n\nTHEIR QUESTION\n{{ $('Validate Support Request Payload').item.json.params.inquiry }}\n\nDRAFT ANSWER (not sent)\n{{ $('Save Support Case Draft in Supabase').item.json.groq_draft }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nAPPROVE sends the draft above to the customer as it stands. To send something different, reply APPROVE and add a line starting with NOTE: followed by the wording you want sent instead - that text replaces the draft. REJECT closes the case without emailing the customer.\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ref_code }}\nTYPE: support_draft\n========================",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -803,7 +869,7 @@
         ],
         [
           {
-            "node": "Format RAG Result",
+            "node": "Raise Support Draft Ops Approval",
             "type": "main",
             "index": 0
           }
@@ -820,6 +886,28 @@
           }
         ]
       ]
+    },
+    "Raise Support Draft Ops Approval": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops - Policy Answer Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Ops - Policy Answer Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Format RAG Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -827,7 +915,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "196a6674-a1b2-4e80-8085-637f183358b6",
+  "versionId": "6e7878d2-7c1f-459e-82ff-e1893d682f1f",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

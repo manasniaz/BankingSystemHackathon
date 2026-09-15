@@ -45,3 +45,40 @@ Full root-cause writeups: `decisions.md` → "Session 7".
 - **WF-00**: reorganized all 82 nodes into a clean layered layout (programmatic, by hop-distance from the trigger) — the canvas had accumulated overlapping nodes from many incremental sessions. No logic or connections changed; re-verified with the connection-completeness audit.
 
 Full root-cause writeup, including two wiring bugs caught before publishing: `decisions.md` → "Session 8".
+
+## Session 9 changes (2026-09-15)
+
+### Two mailboxes
+
+| Mailbox | Role |
+|---|---|
+| **Bank inbox** | The only address customers ever see. The WF-00 Gmail Trigger polls it, and every customer-facing email is sent from it. |
+| **Ops inbox** | Receives every request that needs a human decision. The operator replies APPROVE or REJECT to that email; the reply lands back in the **bank** inbox, where WF-00 recognises the reference code and applies the decision. |
+
+There is no second Gmail credential and no second trigger — the ops reply is just another email arriving at the bank inbox, which is why this needs no extra OAuth setup.
+
+Both addresses are redacted in this repository (`ops-team@yourbank.example`, `bank@yourbank.example`). The live n8n Cloud workflows use the real addresses. If you import these JSON files into your own n8n, set them in: WF-00 `Detect Reference Reply` (the `OPS_TEAM_EMAIL` constant), WF-00 `Alert Ops - Loan Pending Review`, `Confirm Decision to Ops Team`, `Send Ops Decision Problem Email`, `Alert Ops - Joint Transfer Fraud Block`, WF-01 `Email Ops - Transfer Failed Alert`, WF-02 `Email Ops Team - Standing Order Failed`, WF-03 `Email Ops - Fraud Hold Placed Alert`, WF-04 `Alert Ops - Policy Answer Needs Review`, WF-06 `Email Ops Team - Reconciliation Mismatch`.
+
+### Reference codes
+
+Every email that asks a human to decide something carries a short code in its subject line. Replying to the email is enough — the code comes back with it.
+
+| Prefix | Who may answer | Enforced by |
+|---|---|---|
+| `OPS-XXXXXXXX` | the ops mailbox only | WF-00 `Detect Reference Reply` compares the real Gmail sender; a code quoted by anyone else is ignored and the email is handled as an ordinary customer message |
+| `JNT-XXXXXXXX` | any holder of that account | `respond_to_joint_action_by_ref()` in Postgres |
+| `MIN-XXXXXXXX` | the named guardian only | `respond_to_minor_account_request()` in Postgres |
+
+A reply that contains both APPROVE and REJECT, or neither, is never guessed at: the sender gets a short "we could not read your answer" email and the request stays pending.
+
+### What changed per workflow
+
+- **WF-00** (82 → 134 nodes). New `Detect Reference Reply` → `Is Reference Reply?` → `Route Reference Kind` branch sits between `Extract Email Metadata` and the existing pipeline, with four sub-branches: ops decision, joint co-holder consent, guardian consent, and unclear-reply clarification. Account opening now gates on date of birth and age (`Account Opening Eligibility`) and routes under-18 applicants through `Request Minor Account` → guardian consent. `Open First Account for New Customer` calls `open_account_with_details` instead of `open_account_for_profile`, so the date of birth and phone number are stored. Joint invitations carry the chosen mandate. A transfer parked for signatures emails the requester and every co-holder still to sign.
+- **WF-01**. `Transfer Pending Result` now carries the `JNT` ref code, both account numbers, the amount, the requester's name, the expiry and the list of holders still to sign — WF-01 already called `initiate_transfer`, so the mandate enforcement added in migration 012 took effect here with no node change.
+- **WF-03**. A fraud freeze raises a `fraud_hold_release` ops approval and the alert carries its code; replying APPROVE releases the hold (and unfreezes the account if it was the last freeze), REJECT leaves it in place. Previously clearing a fraud hold meant calling `release_account_hold` by hand.
+- **WF-04**. An answer the agent could not ground confidently raises a `support_draft` ops approval and emails the ops mailbox the draft. APPROVE sends it; APPROVE plus a `NOTE:` line sends that text instead; REJECT closes the case without emailing the customer.
+- **WF-06**. The nightly run also calls `expire_stale_ops_approvals()` and `expire_stale_minor_account_requests()`.
+
+`/webhook/approve-draft` and `/webhook/approve-loan` in WF-05 still work and are unchanged. They are now the fallback path rather than the primary one.
+
+Full root-cause writeup, including the two bugs found by live testing: `decisions.md` → "Session 9".

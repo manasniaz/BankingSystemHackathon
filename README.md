@@ -33,16 +33,16 @@ Modern banking demands seamless email interaction without sacrificing financial 
 |---|---|---|---|
 | **Bank Gmail Intake** | ✅ Implemented | Live Google Workspace / Gmail | Shared privately with evaluators — see "Live Demo & Judge Testing Guide" |
 | **n8n Orchestration Plane** | ✅ Implemented | n8n Cloud | 9 Workflows Active (WF-00 to WF-06, WF-08, WF-09) |
-| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 17 Tables + 25+ Atomic RPCs, currency: PKR |
+| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 19 Tables + 40+ Atomic RPCs, currency: PKR |
 | **Fraud Scoring Engine** | ✅ Implemented | Python FastAPI Microservice | `POST /assess-fraud` |
-| **Self-Service Account Opening** | ✅ Implemented | n8n (WF-00) + Supabase Auth Admin API | Single + joint accounts, no manual KYC |
+| **Self-Service Account Opening** | ✅ Implemented | n8n (WF-00) + Supabase Auth Admin API | Single, joint and guardian-supervised minor accounts; date of birth required |
 | **Joint Account Invitations** | ✅ Implemented | n8n (WF-00, WF-08) + Supabase | 5-minute accept/decline window, auto-expiry |
 | **Money-In: Deposits & Loans** | ✅ Implemented | n8n (WF-00, WF-05) + Supabase Treasury account | Self-service deposits (capped), loans ≤ Rs 200k instant, ≤ Rs 2M human-reviewed |
 | **Public RAG Support Chatbot** | ✅ Implemented | n8n (WF-04) | Answers anyone, not just customers |
 | **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | Index: `banking-policy-index` (3072-dim, ns: `banking_policy`), 15 docs loaded — see [`docs/policies.md`](docs/policies.md) |
-| **LLM Support Drafting** | ✅ Implemented | Groq Cloud | `llama-3.3-70b-versatile` |
+| **LLM Support Drafting** | ✅ Implemented | Groq Cloud | `openai/gpt-oss-safeguard-20b` |
 | **Text Embeddings Engine** | ✅ Implemented | Google Gemini API | `gemini-embedding-001` |
-| **Human Approval Queue** | ✅ Implemented | n8n Webhook Gate | `POST /webhook/approve-draft`, `POST /webhook/approve-loan` |
+| **Human Approval Queue** | ✅ Implemented | Dedicated ops Gmail inbox | Operator replies APPROVE / REJECT to a referenced email; `POST /webhook/approve-draft` and `/webhook/approve-loan` remain as a fallback |
 
 ---
 
@@ -73,7 +73,7 @@ flowchart TD
         PY -->|Write Assessment| DB_FRAUD[(fraud_assessments)]
         
         RAG -->|Vector Search| PINECONE[(Pinecone Index: banking-policy-index)]
-        RAG -->|Generate Draft| GROQ[Groq LLM: llama-3.3-70b]
+        RAG -->|Generate Draft| GROQ[Groq LLM: gpt-oss-safeguard-20b]
         RAG -->|Save Draft| DB_DRAFT[(support_case_drafts)]
     end
 
@@ -91,7 +91,7 @@ flowchart TD
         DIRECT --> B
         RAG -->|Not Grounded / Low Confidence| DB_DRAFT
         DB_DRAFT -->|Pending Review| WF5[WF-05 Human Approval Gate]
-        OPERATOR[Ops Specialist] -->|POST /webhook/approve-draft| WF5
+        OPERATOR[Ops Specialist] -->|Replies APPROVE / REJECT to the ops inbox| WF0
         WF5 -->|Update Status & Send Email| B
         WF0_BAL -->|Direct Reply| B
         RPC_TX -->|Transaction Receipt| B
@@ -127,8 +127,16 @@ flowchart TD
 * Duplicate incoming requests return the stored historical execution result without re-executing money movement.
 
 ### 3. Joint Accounts & Multi-Signatory Governance
-* Accounts can have multiple profile associations via `account_holders` with roles (`primary`, `joint`).
-* Closure of a joint account requires explicit consent recorded in `joint_account_actions` and `joint_account_consents`. The account is locked for withdrawal and closed only when 100% of joint holders approve.
+* Accounts can have multiple profile associations via `account_holders` with roles (`primary`, `joint`) and holder types (`adult`, `minor`, `guardian`).
+* **Mandate.** Every account carries an `authority_model`: `either_or` (any holder acts alone) or `all_signatures` (every holder must approve each transfer). The customer chooses it in plain English when they invite someone — *"both of us must approve"* or *"either of us can act alone"* — and `initiate_transfer()` enforces it. An `all_signatures` transfer is parked as a `joint_account_actions` row and every other holder is emailed a `JNT-XXXXXXXX` code they reply **APPROVE** or **REJECT** to.
+* **Closure** requires explicit consent recorded in `joint_account_actions` and `joint_account_consents` — unanimous by default, or `floor(n/2)+1` when the account's `closure_authority` is `majority` and it has 3 or more holders.
+* Nothing is marked approved until the action it authorises has actually succeeded; a signed transfer that then fails (insufficient funds, frozen account) stays pending with its error recorded, rather than looking approved with no money moved.
+
+### 3b. Minor & Guardian Accounts
+* Account opening asks for a **date of birth** and stores it. No date of birth, no account.
+* An applicant under 18 cannot open an account alone. They must name a parent or guardian, who receives a `MIN-XXXXXXXX` code by email explaining exactly what approving means, and replies **APPROVE** or **REJECT**.
+* On approval the account is created with the minor as `primary`/`minor` and the guardian as `joint`/`guardian`. The minor can check the balance and receive money; **only the guardian can move money out**, enforced by `is_holder_transfer_authorized()` inside `initiate_transfer()` — not by a workflow node. A minor holder also cannot take out a loan.
+* `promote_minors_to_adult()` runs nightly in WF-06 and converts the holder to full adult access on their 18th birthday.
 
 ### 4. Background Reconciliation Audit
 * **WF-06 Reconciliation** executes nightly at midnight UTC.
@@ -216,16 +224,27 @@ Anyone can ask Digital Bank a policy question by email — you don't need to be 
 3. **The confidence fork** — this is the part that changed after an early design mistake (see `docs/decisions.md` → Session 5):
    - **Grounded and confident (`grounded=true`, `confidence >= 0.7`)**: WF-04 sends the answer to the customer **directly**. No human step. The case is marked `answered`.
    - **Not grounded, low confidence, or an agent error**: the draft is written to `support_case_drafts` (`human_review_state = 'pending'`), the case is marked `awaiting_human_review`, and the customer gets a receipt saying a specialist will follow up — never a guess presented as fact.
-4. **Human Gate (WF-05)** — only for the second path above. An Ops specialist reviews the draft and posts approval via `/webhook/approve-draft`:
-   ```json
-   {
-     "draft_id": "c1a8d294-81e3-4f2a-b72e-9d8a1e49b812",
-     "action": "approve"
-   }
-   ```
-   `WF-05` updates draft status to `approved` and sends the final answer to the customer.
+4. **Human Gate** — only for the second path above. The draft is queued as an `ops_approvals` row and emailed to the ops mailbox with an `OPS-XXXXXXXX` code. The specialist replies **APPROVE** to send the draft as it stands, **APPROVE** plus a `NOTE:` line to send different wording instead, or **REJECT** to close the case without emailing the customer. (`POST /webhook/approve-draft` on WF-05 still works and remains available as a fallback.)
 
 Human review exists for what's genuinely ambiguous or unanswerable from policy — not as a bottleneck on every question a confident, grounded model could already answer correctly.
+
+---
+
+## ✉️ Human Approval by Email
+
+There are two mailboxes. Customers only ever see the **bank inbox**. Every decision that needs a person goes to a separate **ops inbox**, and the operator decides it **by replying to that email** — there is no console to log into and no JSON to hand-craft.
+
+| What raises it | Type | Reply APPROVE does | Reply REJECT does |
+|---|---|---|---|
+| A loan above the Rs 200,000 auto-approval ceiling | `loan` | disburses the funds and creates the repayment standing order | declines it, with your `NOTE:` shown to the customer as the reason |
+| A policy answer the RAG agent couldn't ground confidently | `support_draft` | sends the draft (or your `NOTE:` text instead) to the customer | closes the case, customer not emailed |
+| A fraud freeze placed automatically by WF-03 | `fraud_hold_release` | releases the hold and unfreezes the account | leaves the account frozen |
+
+The reply lands back in the **bank** inbox, where WF-00 recognises the reference code — so this needs no second Gmail credential and no second trigger.
+
+**How the reply is read, and what it refuses to guess.** The decision is taken from what the operator actually typed, meaning everything above the first Gmail quote marker, so the APPROVE/REJECT words inside the quoted original can't be mistaken for their answer. An `OPS-` code is only actionable when the real Gmail sender **is** the ops mailbox; anyone else quoting that code is handled as an ordinary customer email. A reply containing **both** APPROVE and REJECT, or neither, is never resolved one way or the other — the sender gets a short "we could not read your answer" email and the request stays pending. A reference can only be decided once, expires after 7 days, and every decision is written to `audit_log`.
+
+Customers use the same mechanism for the decisions that are theirs to make: `JNT-XXXXXXXX` for co-signing a transfer on an all-signatures joint account, `MIN-XXXXXXXX` for a guardian approving a minor's account. Those are authorised in Postgres — you must be a holder of that account, or the named guardian — not by trusting the sender address alone.
 
 ---
 
@@ -235,7 +254,7 @@ Every account used to open at Rs 0.00 with no way to fund it. Fixed with a real,
 
 - **`TREASURY-MAIN`**: an internal account (never customer-owned, never reachable by any email-authenticated intent) holding Rs 500,000,000 of the bank's own capital — the counterparty for every deposit and loan disbursement, via the same `process_money_movement()` primitive `execute_transfer()` uses. Nightly reconciliation checks it like any other account.
 - **Self-service deposits**: `deposit_funds` RPC, capped at Rs 50,000/request and 3/account/24h — a claimed deposit by email is inherently unverifiable, so it's bounded rather than escalated to a human.
-- **Loans**: `apply_for_loan` at a flat 10% interest rate. Up to Rs 200,000 → auto-approved and disbursed instantly. Up to a Rs 2,000,000 ceiling → reviewed by a specialist via `/webhook/approve-loan` (WF-05). Repayment happens automatically via a standing order, same mechanism as any other recurring payment.
+- **Loans**: `apply_for_loan` at a flat 10% interest rate. Up to Rs 200,000 → auto-approved and disbursed instantly. Up to a Rs 2,000,000 ceiling → queued to the ops mailbox with an `OPS-XXXXXXXX` code and approved or declined by reply (see "Human Approval by Email" above; `/webhook/approve-loan` on WF-05 remains as a fallback). Repayment happens automatically via a standing order, same mechanism as any other recurring payment. One open loan per customer at a time, and a minor account holder cannot take one out at all.
 
 Full design and the two bugs it took to get here (a reconciliation-breaking genesis-funding mistake, and a pair of CHECK-constraint violations that had silently broken the RAG auto-answer feature since it was written): [`docs/policies.md`](docs/policies.md) and [`docs/decisions.md`](docs/decisions.md) → Session 7.
 
@@ -498,6 +517,64 @@ Send each of these to the Bank Gmail address you were given privately.
   ```
 * **System Execution**: `WF-00` classifies `LOAN_APPLICATION`, calls `apply_for_loan` (Rs 30,000 ≤ the Rs 200,000 auto-approve ceiling) → disbursed instantly from `TREASURY-MAIN`, a monthly repayment standing order created.
 * **Expected Response**: Confirmation email with the principal, total repayable (flat 10% interest), term, and monthly repayment amount — no human step.
+---
+
+#### Scenario 7: Loan Application — Human Approval by Email Reply
+* **Subject**: `Loan request`
+* **Body**:
+  ```text
+  Please give me a loan of 500000 for 6 months.
+  ```
+* **System Execution**: Rs 500,000 is above the Rs 200,000 auto-approve ceiling, so `apply_for_loan` creates the loan as `pending_review` and raises an `ops_approvals` row with a code like `OPS-DBD0C32A`.
+* **Expected Response (customer)**: An email confirming the figures and saying it is with the credit team — no decision yet.
+* **Expected Response (ops mailbox)**: An alert subject-lined `[OPS-DBD0C32A] Loan approval needed - Rs 500,000.00` with the applicant, the numbers, and reply instructions.
+* **Now reply to that ops alert** with a single word on the first line — `APPROVE` (optionally with a second line `NOTE: verified income`) or `REJECT`:
+  * **APPROVE** → funds disbursed from `TREASURY-MAIN`, repayment standing order created, customer emailed the approval with full figures, ops emailed a confirmation that the reference is now closed.
+  * **REJECT** → customer emailed a decline, with your `NOTE:` text shown as the reason.
+* Replying a second time to the same reference returns "already approved" and changes nothing. A reply containing both APPROVE and REJECT gets a "we could not read your answer" email and leaves the loan pending.
+
+---
+
+#### Scenario 8: Account Opening — Date of Birth Required
+* **Subject**: `Open an account`
+* **Body**:
+  ```text
+  Hi, I would like to open a savings account.
+  ```
+* **Expected Response**: We do **not** open an account. You get an email asking for your date of birth, with the accepted formats, and a note that anyone under 18 should also include a guardian's email address.
+* **Now reply** with `Date of birth: 1998-04-22` → the account is opened and the date of birth is stored on your profile.
+
+---
+
+#### Scenario 9: Minor Account — Guardian Consent
+* **Subject**: `Open an account`
+* **Body** (send this from the *minor's* address):
+  ```text
+  I want to open a savings account.
+  Date of birth: 14 May 2011
+  Guardian: <a second email address you control>
+  ```
+* **System Execution**: The applicant is 14, so no account is opened. A `minor_account_requests` row is created with a code like `MIN-BC727256`.
+* **Expected Response (applicant)**: "We have emailed your guardian to ask them to approve the account."
+* **Expected Response (guardian address)**: `[MIN-BC727256] Approval needed: ... wants to open a bank account`, spelling out that only they will be able to move money out, that the child can see the balance and receive money, and that it converts at 18.
+* **Now reply from the guardian address** with `APPROVE`. Both parties are created as customers if they aren't already, the account is opened with the minor as the primary/minor holder and the guardian as the joint/guardian holder, and both get a confirmation naming the account number and the exact date it converts to full adult access.
+* Try a transfer **from the minor's address** afterwards: it is refused — *"This account is held by a minor. Only the registered guardian can move money out of it."* The same transfer **from the guardian's address** goes through.
+
+---
+
+#### Scenario 10: Joint Account With a Both-Signatures Mandate
+* **Subject**: `Joint account`
+* **Body**:
+  ```text
+  I want to open a joint account with <second address you control>.
+  Both of us must approve every transfer.
+  ```
+* **System Execution**: The mandate is parsed as `all_signatures` and carried on the invitation. Accept it from the second address within 5 minutes; the account is created with `authority_model = 'all_signatures'`.
+* **Now request a transfer** from that joint account. Nothing moves. Instead:
+  * You get: *"Your transfer needs your co-holder's approval"* with a `JNT-XXXXXXXX` reference and how many approvals are outstanding.
+  * Your co-holder gets: `[JNT-XXXXXXXX] Your approval is needed for a transfer of Rs ...`
+* **Reply APPROVE from the co-holder's address** → the fraud service re-scores the transfer *at that moment* (the assessment taken when it was first requested has a 10-minute TTL and would be stale), then it executes and both of you are emailed the result. **Reply REJECT** → the request closes immediately and no money moves.
+* Say *"either of us can act alone"* instead in the opening email and the same transfer goes straight through with no second signature.
 
 ---
 

@@ -251,6 +251,82 @@
           "name": "Supabase account"
         }
       }
+    },
+    {
+      "id": "c2a70f18-9b41-4d2e-8c55-3e2f9a7b6d10",
+      "name": "Expire Stale Ops Approvals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        460,
+        480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/expire_stale_ops_approvals",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "d4e91c07-2f63-4a88-bb17-5c8d1e4a9f22",
+      "name": "Expire Stale Guardian Requests",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        480
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/expire_stale_minor_account_requests",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
     }
   ],
   "connections": {
@@ -264,6 +340,11 @@
           },
           {
             "node": "Execute Supabase RPC promote_minors_to_adult",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Expire Stale Ops Approvals",
             "type": "main",
             "index": 0
           }
@@ -331,6 +412,17 @@
           }
         ]
       ]
+    },
+    "Expire Stale Ops Approvals": {
+      "main": [
+        [
+          {
+            "node": "Expire Stale Guardian Requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -338,7 +430,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "63a9ea81-be10-401a-8ff6-029f0f735114",
+  "versionId": "88a656b0-1ee6-440c-a313-11315e42435b",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

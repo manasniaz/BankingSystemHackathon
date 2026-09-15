@@ -96,6 +96,19 @@
           }
         }
       }
+    },
+    {
+      "id": "8f1c40ab-6d25-4e93-9a70-2b7d1f6c5e84",
+      "name": "Policy Documents (Session 9 Additions)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        260
+      ],
+      "parameters": {
+        "jsCode": "// Four documents added in Session 9, covering features that did not exist when\n// the original 15 were written. Kept as a separate node so this batch can be\n// seeded on its own (disconnect 'Policy Documents' for a delta run -- disabling\n// it is not enough, a disabled n8n node passes its input straight through); a\n// full reindex runs both nodes and gets all 19.\nconst docs = [\n  {\n    doc_id: \"doc_minor_guardian_accounts\",\n    text: \"Minor and Guardian Account Policy: Digital Bank opens accounts for applicants under 18, but only with the explicit consent of a parent or guardian. Every account application must include a date of birth; we accept 2010-05-14, 14/05/2010, 14 May 2010 or May 14, 2010, and where the numeric form is ambiguous we read it day first. An applicant under 18 must also give a parent or guardian email address. We then email that guardian a consent request with a reference code beginning MIN-, and the account is only opened once the guardian replies APPROVE from that same address. Only the named guardian can answer; a reply from any other address is refused. On a guardian-supervised account the minor is the primary holder and the guardian is added as a joint holder with guardian authority. The minor can check the balance and receive money into the account at any time, but cannot transfer money out and cannot take out a loan; only the guardian can move money out. The restriction is enforced in the banking database itself, not only in the email workflow. The account converts automatically to full adult access on the holder\\u2019s 18th birthday, at which point the guardian\\u2019s control ends; no request or paperwork is needed for that conversion. If the guardian does not reply within 7 days the request expires and the applicant can simply ask again. If the guardian replies REJECT, no account is opened and the applicant is told.\"\n  },\n  {\n    doc_id: \"doc_joint_account_mandate\",\n    text: \"Joint Account Mandate Policy: A joint account at Digital Bank operates under one of two mandates, chosen by the customers when the account is opened. Either-or (the default) means any single holder can transfer money out on their own. All-signatures, also called both-signatures or dual control, means every holder must approve each individual transfer before it is carried out. To choose the stricter mandate, say so when inviting the other person, for example \\\"both of us must approve every transfer\\\"; to choose the default, say \\\"either of us can act alone\\\". The invitation and confirmation emails both state which mandate was applied. On an all-signatures account, a requested transfer moves no money immediately: it is held, the person who asked for it is told how many approvals are outstanding, and every other holder is emailed a reference code beginning JNT- which they answer by replying APPROVE or REJECT. Only a holder of that account can answer. When the last approval arrives we run a fresh fraud check at that moment and then carry out the transfer, because the original fraud assessment expires after ten minutes. A single REJECT closes the request immediately and no money moves. An unanswered request expires after 7 days. Closing a joint account is separate from the transfer mandate and always requires the agreement of all holders, except on accounts configured for majority closure with three or more holders, where a simple majority is enough. A transfer that is fully approved but then fails, for example for insufficient funds, does not silently disappear: it stays open with the reason recorded and everyone involved is told what happened.\"\n  },\n  {\n    doc_id: \"doc_loan_approval_process\",\n    text: \"Loan Approval Policy: Digital Bank offers personal loans by email at a flat 10 percent interest rate, for a term between 1 and 60 months. A loan of Rs 200,000 or less is approved automatically and the funds are credited to your account immediately. A loan above Rs 200,000 and up to the Rs 2,000,000 email ceiling is referred to our credit review team; you will receive an email confirming the principal, the term, the total repayable and the monthly repayment, and a separate email with the decision once it is made, usually within one business day. Loans above Rs 2,000,000 cannot be arranged by email and require a branch visit. Repayment is automatic: a monthly standing order is created when the loan is disbursed, and the loan is marked paid off once the outstanding balance reaches zero. You may hold one loan at a time; a further application is refused until the existing loan is repaid or the review decision on it is made. A minor account holder cannot take out a loan; a guardian must apply in their own name. If a loan is declined you are told the reason and are welcome to apply again later.\"\n  },\n  {\n    doc_id: \"doc_human_review_policy\",\n    text: \"Human Review Policy: Most requests at Digital Bank are handled end to end automatically, and we deliberately do not send everything to a person. Handled without any human step: balance enquiries, transfers from accounts you hold that pass our fraud checks, deposits within the published limits, loans of Rs 200,000 or less, opening a single or joint account, scheduled standing order payments, and any policy question we can answer confidently from these published documents. A person is involved only where the decision genuinely needs judgement: a loan above Rs 200,000, a policy question our assistant cannot answer confidently from published policy, and releasing an account freeze placed by our fraud checks. In those cases nothing is sent to you until a member of our operations team has reviewed it, and you are told that a review is under way rather than being given a guess. Some decisions are not ours to make at all and are referred to you instead: a co-holder approving a transfer on an all-signatures joint account, and a parent or guardian approving an account for someone under 18. A fraud freeze cannot be lifted by the customer, by email or otherwise; that always requires a human operator, which is deliberate. Every decision, automatic or human, is written to an immutable audit record.\"\n  },\n];\n\nreturn docs.map(d => ({ json: { doc_id: d.doc_id, text: d.text } }));"
+      }
     }
   ],
   "connections": {
@@ -139,6 +152,22 @@
             "node": "Policy Documents",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Policy Documents (Session 9 Additions)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Policy Documents (Session 9 Additions)": {
+      "main": [
+        [
+          {
+            "node": "Seed Policy Knowledge Base",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -149,7 +178,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "ecfc94c7-3d3e-42ef-8747-07769461f08b",
+  "versionId": "6691ffb9-0521-4848-a011-f9c8b7572f91",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

@@ -359,6 +359,12 @@
               "value": "={{ $json.joint_action_id }}"
             },
             {
+              "id": "tx_pending_ref",
+              "name": "ref_code",
+              "type": "string",
+              "value": "={{ $json.ref_code }}"
+            },
+            {
               "id": "tx_pending_required",
               "name": "required",
               "type": "number",
@@ -369,6 +375,42 @@
               "name": "consents_count",
               "type": "number",
               "value": "={{ $json.consents_count }}"
+            },
+            {
+              "id": "tx_pending_holders",
+              "name": "pending_holder_emails",
+              "type": "array",
+              "value": "={{ $json.pending_holder_emails }}"
+            },
+            {
+              "id": "tx_pending_src",
+              "name": "source_account_number",
+              "type": "string",
+              "value": "={{ $json.source_account_number }}"
+            },
+            {
+              "id": "tx_pending_dst",
+              "name": "destination_account_number",
+              "type": "string",
+              "value": "={{ $json.destination_account_number }}"
+            },
+            {
+              "id": "tx_pending_amt",
+              "name": "amount",
+              "type": "number",
+              "value": "={{ $json.amount }}"
+            },
+            {
+              "id": "tx_pending_reqname",
+              "name": "requester_name",
+              "type": "string",
+              "value": "={{ $json.requester_name }}"
+            },
+            {
+              "id": "tx_pending_exp",
+              "name": "expires_at",
+              "type": "string",
+              "value": "={{ $json.expires_at }}"
             }
           ]
         },
@@ -481,7 +523,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "c2df29a9-af45-46b4-bffb-efafb17db062",
+  "versionId": "851b74c7-a1fe-49bc-8995-f2fe5654fcb7",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

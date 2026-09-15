@@ -21,6 +21,16 @@
 - **Laptop independence.** Every scheduled and event-driven workflow runs entirely in n8n Cloud / Supabase Cloud / Railway; the developer's machine is only needed to edit code and push to GitHub.
 - **Human-in-the-loop for anything irreversible or reputationally risky** — see `decisions.md` domain 6 for the explicit unsupervised vs. always-human action lists.
 
+## Added in Session 9
+
+| Area | Requirement | Where it's implemented |
+|---|---|---|
+| Human approval | Every decision that needs a human goes to a dedicated ops mailbox and is decided by **replying** to that email, not by calling a webhook. Only the real Gmail sender counts as authorisation. | `ops_approvals` + `resolve_ops_approval()` (`009`/`011`), WF-00 `Detect Reference Reply` → `Resolve Ops Approval` |
+| Account opening | An account is only opened once we know the applicant's date of birth. Under 18 cannot proceed without a named guardian's explicit consent. | `open_account_with_details()`, `request_minor_account()` (`015`), WF-00 `Account Opening Eligibility` |
+| Minor accounts | A minor holder may view the balance and receive money but may never move money out; the guardian can. Full access is restored automatically at 18. | `is_holder_transfer_authorized()` enforced by `initiate_transfer()` (`012`), `promote_minors_to_adult()` run nightly by WF-06 |
+| Joint mandate | A joint account is either-or or all-signatures by the customers' explicit choice, and that choice is enforced on every transfer. | `accounts.authority_model`, `create_joint_account_invitation()` (`016`), `initiate_transfer()` (`012`), WF-00 `Resolve Joint Invitation Request` |
+| Transfer authorization | The holder check, minor check and mandate live in the database next to the money movement, not only in an n8n Code node. | `initiate_transfer()` (`012`) — the single enforced entry point |
+
 ## Explicitly not a requirement for this submission
 
-Multi-currency FX conversion, real interbank settlement/holiday calendars, interest accrual, guardian/minor account permissions. See `mvp-scope.md`.
+Multi-currency FX conversion, real interbank settlement/holiday calendars, interest accrual on deposit accounts, and reversal into a negative balance. See `mvp-scope.md`.
