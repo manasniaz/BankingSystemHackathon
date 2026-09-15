@@ -39,7 +39,7 @@ Modern banking demands seamless email interaction without sacrificing financial 
 | **Joint Account Invitations** | ✅ Implemented | n8n (WF-00, WF-08) + Supabase | 5-minute accept/decline window, auto-expiry |
 | **Money-In: Deposits & Loans** | ✅ Implemented | n8n (WF-00, WF-05) + Supabase Treasury account | Self-service deposits (capped), loans ≤ Rs 200k instant, ≤ Rs 2M human-reviewed |
 | **Public RAG Support Chatbot** | ✅ Implemented | n8n (WF-04) | Answers anyone, not just customers |
-| **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | Index: `banking-policy-index` (3072-dim, ns: `banking_policy`), 15 docs loaded — see [`docs/policies.md`](docs/policies.md) |
+| **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | Index: `banking-policy-index` (3072-dim, ns: `banking_policy`) — source documents in [`docs/policy-documents/`](docs/policy-documents/), editable via Google Drive sync |
 | **LLM Support Drafting** | ✅ Implemented | Groq Cloud | `openai/gpt-oss-safeguard-20b` |
 | **Text Embeddings Engine** | ✅ Implemented | Google Gemini API | `gemini-embedding-001` |
 | **Human Approval Queue** | ✅ Implemented | Dedicated ops Gmail inbox | Operator replies APPROVE / REJECT to a referenced email; `POST /webhook/approve-draft` and `/webhook/approve-loan` remain as a fallback |
@@ -138,6 +138,11 @@ flowchart TD
 * On approval the account is created with the minor as `primary`/`minor` and the guardian as `joint`/`guardian`. The minor can check the balance and receive money; **only the guardian can move money out**, enforced by `is_holder_transfer_authorized()` inside `initiate_transfer()` — not by a workflow node. A minor holder also cannot take out a loan.
 * `promote_minors_to_adult()` runs nightly in WF-06 and converts the holder to full adult access on their 18th birthday.
 
+### 3c. Closing an Account
+* An account is closed only when its balance is exactly **Rs 0.00** and it has no active holds, no active standing orders paying out of it, and no outstanding or pending loan. Each blocker is reported in plain language with the amount or count involved, up front, before anything is created.
+* **Closure is irreversible and is never acted on from a single email.** Every holder of the account — *including the person who asked* — must confirm by replying `APPROVE` to an emailed `JNT-XXXXXXXX` reference code. On a joint account a single `REJECT` from any holder stops it; an unanswered request expires after 7 days and the account stays open.
+* A minor on a guardian-supervised account cannot request closure; the guardian must.
+
 ### 4. Background Reconciliation Audit
 * **WF-06 Reconciliation** executes nightly at midnight UTC.
 * Invokes `run_reconciliation()` RPC to verify:
@@ -217,7 +222,7 @@ Assessments are stored in `fraud_assessments` with a 10-minute TTL (`expires_at`
 
 ## 🤖 RAG Policy Support Engine & Human Approval
 
-Anyone can ask Digital Bank a policy question by email — you don't need to be a customer. For general policy inquiries (fees, limits, terms, wire rules, privacy, account opening), **WF-04** activates a LangChain RAG pipeline grounded strictly in [`docs/policies.md`](docs/policies.md) (the same 13 documents embedded in Pinecone by WF-09):
+Anyone can ask Digital Bank a policy question by email — you don't need to be a customer. For general policy inquiries (fees, limits, terms, wire rules, privacy, account opening), **WF-04** activates a LangChain RAG pipeline grounded strictly in the bank's published policy documents ([`docs/policy-documents/`](docs/policy-documents/) - six readable documents that are the source of truth, embedded into Pinecone by WF-09):
 
 1. **Retrieval**: Queries Pinecone index `banking-policy-index` (namespace `banking_policy`) using Google Gemini embeddings (`gemini-embedding-001`), capped at 2 search attempts.
 2. **Grounded Generation**: Groq synthesizes a response strict to retrieved policy citations, returning `{draft, grounded, confidence, citations, needs_human}`.
@@ -575,6 +580,27 @@ Send each of these to the Bank Gmail address you were given privately.
   * Your co-holder gets: `[JNT-XXXXXXXX] Your approval is needed for a transfer of Rs ...`
 * **Reply APPROVE from the co-holder's address** → the fraud service re-scores the transfer *at that moment* (the assessment taken when it was first requested has a 10-minute TTL and would be stale), then it executes and both of you are emailed the result. **Reply REJECT** → the request closes immediately and no money moves.
 * Say *"either of us can act alone"* instead in the opening email and the same transfer goes straight through with no second signature.
+
+---
+
+#### Scenario 11: Deleting an Account
+* **Subject**: `Close my account`
+* **Body**:
+  ```text
+  Please delete my bank account.
+  ```
+* **System Execution**: classified as `ACCOUNT_CLOSURE`. We check the balance, holds, standing orders and loans *before* creating anything.
+* **If the account still holds money**: you get an email naming the exact balance and telling you to transfer it out first. Nothing is changed.
+* **If it's clean**: you get a confirmation request with a `JNT-XXXXXXXX` reference explaining that closure is permanent.
+* **Reply `APPROVE`** and the account is closed. **Reply `REJECT`**, or ignore it for 7 days, and it stays open.
+* On a joint account, *every* holder gets the same reference and all must approve.
+* If you hold several accounts and didn't say which, we list them and ask — we never guess which account to close.
+
+---
+
+#### Scenario 12: Automated Mail Is Ignored
+Forward any automated notification (a Google security alert, a newsletter, anything from a `no-reply@` address) to the bank.
+* **Expected Response**: **none at all.** The sender is recognised as automated and the execution ends before any lookup, case or reply. Previously the bank politely told `no-reply@accounts.google.com` that it wasn't a registered customer.
 
 ---
 

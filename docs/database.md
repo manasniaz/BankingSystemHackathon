@@ -59,3 +59,13 @@ Applied live 2026-09-15. Each file is kept exactly as it was applied, including 
 **`minor_account_requests`** — `ref_code` (unique), `applicant_email`/`applicant_name`/`date_of_birth`, `guardian_email`, `account_type`, `currency`, `status` (`pending_guardian` | `guardian_approved` | `guardian_rejected` | `completed` | `expired`), and the `account_id` / `minor_profile_id` / `guardian_profile_id` filled in once the account is opened. `expires_at` is 7 days.
 
 Both tables have RLS enabled with an explicit deny-all policy for `anon` and `authenticated`, matching the pattern established in `003_rls_explicit_deny_policies.sql`. Every new function is `SECURITY DEFINER`, owned by `banking_functions`, revoked from `PUBLIC` and granted only to `service_role`.
+
+## 018: closing an account by email
+
+| # | File | What it changes |
+|---|---|---|
+| 018 | `018_account_closure_by_email.sql` | `request_joint_closure()` no longer auto-consents the requester, so a single-holder account can no longer be closed instantly by one unverified email; every holder confirms via the emailed `JNT-` code. `request_account_closure()` is the new customer-facing entry point and runs the blocking checks up front - non-zero balance (amount quoted), active holds, active standing orders, an outstanding or pending loan, frozen or already-closed status - returning plain language instead of creating a request destined to fail. |
+
+The confirm-and-execute half required no new SQL: `respond_to_joint_action_by_ref()` and `finalize_joint_action_if_complete()` have handled `action_type = 'close_account'` since migration 014.
+
+Note the loan check is new here and does not exist in `close_account()` itself - an outstanding loan is a debt to the bank, and the account it is repaid from cannot simply disappear.

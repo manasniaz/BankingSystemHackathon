@@ -338,7 +338,7 @@
                 "combinator": "and",
                 "conditions": [
                   {
-                    "id": "intent-joint-open",
+                    "id": "intent-joint",
                     "leftValue": "={{ $json.intent }}",
                     "operator": {
                       "operation": "equals",
@@ -404,6 +404,30 @@
               },
               "renameOutput": true,
               "outputKey": "Deposit"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-closure",
+                    "leftValue": "={{ $json.intent }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "ACCOUNT_CLOSURE"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Account Closure"
             }
           ]
         },
@@ -2383,7 +2407,7 @@
         "promptType": "define",
         "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
         "options": {
-          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own balance/statement. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
+          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, ACCOUNT_CLOSURE, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- ACCOUNT_CLOSURE: wanting an existing account closed, deleted, cancelled, deactivated or terminated. Trigger words: close my account, delete my account, I want out, shut down my account. If they are ASKING what the closure rules are rather than requesting it, that is POLICY_RAG. If they want their money moved somewhere first, that is TRANSFER.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own balance/statement. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
         }
       },
       "id": "5a40c985-2eb2-4b17-b131-75309b5b291b",
@@ -2828,6 +2852,39 @@
               },
               "renameOutput": true,
               "outputKey": "Policy Answer Approved"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "draft-no-type",
+                    "leftValue": "={{ $json.request_type }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "support_draft"
+                  },
+                  {
+                    "id": "draft-no-dec",
+                    "leftValue": "={{ $json.decision }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "reject"
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Policy Answer Rejected"
             }
           ]
         },
@@ -4300,6 +4357,321 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "5b70be40-8499-4424-9ab1-ef86ff66620a",
+      "name": "Is Automated Sender?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        420,
+        -60
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
+            {
+              "id": "auto-local-part",
+              "leftValue": "={{ $json.fromEmail }}",
+              "rightValue": "^(no-?reply|noreply|donotreply|do-not-reply|do_not_reply|mailer-daemon|postmaster|bounces?|notifications?|alerts?|automated|auto-confirm|support-noreply|security-noreply)@",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            },
+            {
+              "id": "auto-domain",
+              "leftValue": "={{ $json.fromEmail }}",
+              "rightValue": "@(accounts\\.google\\.com|google\\.com|googlemail\\.com\\.invalid|amazonses\\.com|sendgrid\\.net|mailgun\\.org|mail\\.notifications\\.[a-z.]+)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            },
+            {
+              "id": "auto-noreply-anywhere",
+              "leftValue": "={{ $json.fromEmail }}",
+              "rightValue": "(^|[.+_-])no-?reply([.+_-]|@)",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "06e12db6-f1d7-4871-ac55-7cbd33078a6e",
+      "name": "Ignore Automated Sender",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        700,
+        -200
+      ],
+      "parameters": {},
+      "notes": "Dead end on purpose. An automated notification (a Google security alert, a bounce, a mailing-list digest) is not a customer request. Replying to one is at best noise sent to a mailbox nobody reads, and at worst a mail loop with another robot. Nothing is sent and no case is opened."
+    },
+    {
+      "id": "1454ec2c-e0a7-47a5-b61e-2b42133622af",
+      "name": "Send Policy Answer Rejected Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2240,
+        -340
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "=About your question to Digital Bank",
+        "emailType": "text",
+        "message": "=Hello,\n\nWe promised you a follow-up on the question you sent us, so we want to close the loop rather than leave you waiting.\n\nOur specialist has reviewed it and we are not able to give you a confirmed answer by email on this one. Rather than send you something we can't stand behind, we would rather tell you straight.\n\n{{ $json.decision_note ? 'Note from our team: ' + $json.decision_note + '\\n\\n' : '' }}Please reply to this email with any more detail you can give us, and we will take another look. If it is urgent, say so in your reply and we will prioritise it.\n\nApologies for not having a fuller answer for you this time.\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "c2f58ccc-809e-4f1a-931e-ece50a24b873",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "67220f39-ed1b-4987-b41b-cee725dc803c",
+      "name": "Detect Account Closure Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        1820
+      ],
+      "parameters": {
+        "jsCode": "// Closure is decided AFTER both classifier paths (keyword and LLM) have had\n// their say, so the rule lives in one place instead of being duplicated into\n// two 4KB classifiers that must be kept identical.\n//\n// It only ever promotes UNKNOWN. That is deliberate:\n//   \"what is your account closure policy\"  -> POLICY_RAG, they want an answer, not a closure\n//   \"close my account and send the balance to ACC-123\" -> TRANSFER, move the money first\n// Overriding either of those would do the customer real harm, so a confident\n// classification is never second-guessed here.\nconst item = $input.first().json;\nconst intent = String(item.intent || '');\n\nif (intent !== 'UNKNOWN') {\n  return [{ json: item }];\n}\n\nconst text = ((item.subject || '') + ' ' + (item.bodyText || '')).toLowerCase();\n\nconst closureVerb = /\\b(close|closing|closure|delete|deleting|deactivate|terminate|terminating|cancel|cancelling|canceling|shut\\s?down)\\b/.test(text);\nconst mentionsAccount = /\\b(account|acc|acct)\\b/.test(text);\n// \"cancel my standing order on that account\" is a standing-order request, not a\n// closure request, and the two share the verb 'cancel'.\nconst isStandingOrder = /\\b(standing order|recurring|scheduled payment|direct debit|subscription)\\b/.test(text);\n\nif (closureVerb && mentionsAccount && !isStandingOrder) {\n  return [{ json: Object.assign({}, item, { intent: 'ACCOUNT_CLOSURE' }) }];\n}\n\nreturn [{ json: item }];"
+      }
+    },
+    {
+      "id": "21a97dff-7e57-4248-a9ad-3f1ac52b986d",
+      "name": "Resolve Account Closure Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        1820
+      ],
+      "parameters": {
+        "jsCode": "// Input is Route by Intent, which carries whichever classification won (keyword\n// or LLM), so read $input rather than naming a specific classifier node.\nconst ctx = $input.first().json;\nconst haystack = ((ctx.bodyText || '') + ' ' + (ctx.subject || '')).toUpperCase();\nconst all = ctx.authorizedAccounts || [];\nconst active = all.filter(a => a.status === 'active');\n\nfunction out(extra) {\n  return [{ json: Object.assign({\n    fromEmail: ctx.fromEmail,\n    subject: ctx.subject,\n    full_name: ctx.full_name,\n    profile_id: ctx.profile_id\n  }, extra) }];\n}\n\nif (active.length === 0) {\n  const closedCount = all.length - active.length;\n  return out({ ok: false, reason: closedCount > 0\n    ? 'We could not find an open account in your name. It looks like your account(s) with us are already closed.'\n    : 'We could not find an open account in your name to close.' });\n}\n\n// A minor holder cannot close the account any more than they can empty it.\nconst minorOnly = active.every(a => a.holder_type === 'minor');\nif (minorOnly) {\n  return out({ ok: false, reason: 'This is a guardian-supervised account. Your parent or guardian needs to ask us to close it, from their own email address.' });\n}\n\nconst mentioned = haystack.match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nlet target = null;\nfor (const m of mentioned) {\n  const hit = active.find(a => String(a.account_number).toUpperCase() === m);\n  if (hit) { target = hit; break; }\n}\n\nif (!target) {\n  if (active.length === 1) {\n    target = active[0];\n  } else {\n    // Never guess which account to close when the customer holds several.\n    const list = active.map(a => '  ' + a.account_number + ' - ' + a.account_type +\n      ', balance Rs ' + (Number(a.balance) / 100).toFixed(2)).join('\\n');\n    return out({ ok: false, needsAccountChoice: true, accountList: list,\n      reason: 'You hold more than one open account with us, so we need you to tell us which one to close.' });\n  }\n}\n\nif (target.holder_type === 'minor') {\n  return out({ ok: false, reason: 'That account is guardian-supervised. Your parent or guardian needs to ask us to close it, from their own email address.' });\n}\n\nreturn out({\n  ok: true,\n  account_id: target.account_id,\n  account_number: target.account_number,\n  account_type: target.account_type,\n  balance: target.balance\n});"
+      }
+    },
+    {
+      "id": "cc90f744-0d81-4a8f-ae7b-93a9034e319d",
+      "name": "Closure Request Understood?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3640,
+        1820
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "closure-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "998c636e-3668-47ab-8b10-143d2b6502eb",
+      "name": "Send Closure Clarification Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3920,
+        1960
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=RE: {{ $json.subject }} - about closing your account",
+        "emailType": "text",
+        "message": "=Hello {{ $json.full_name }},\n\n{{ $json.reason }}\n\n{{ $json.needsAccountChoice ? 'Your open accounts are:\\n' + $json.accountList + '\\n\\nJust reply with the account number you want closed, for example \"please close ' + ($json.accountList || '').trim().split('\\n')[0].trim().split(' ')[0] + '\".' : 'If you think this is wrong, reply to this email and we will look into it.' }}\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "fa081938-bd8c-457f-9480-265e17c99762",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "b5ff4fb8-5d52-438b-920a-dd4947770e37",
+      "name": "Request Account Closure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3920,
+        1820
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/request_account_closure",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_profile_id: $json.profile_id, p_account_id: $json.account_id }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "eace3a9a-41e8-4b67-b52d-986759d0b063",
+      "name": "Closure Request Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4200,
+        1820
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "closure-accepted",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "28e3cd01-474b-437d-917a-f8ada3d51ea7",
+      "name": "Send Closure Blocked Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4480,
+        1960
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Resolve Account Closure Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Resolve Account Closure Request').item.json.subject }} - we can't close that account yet",
+        "emailType": "text",
+        "message": "=Hello {{ $('Resolve Account Closure Request').item.json.full_name }},\n\nWe cannot close that account just yet.\n\n{{ $json.error }}\n\n{{ $json.has_balance ? 'To move the balance, reply with something like \"transfer ' + ($json.balance / 100).toFixed(2) + ' to ACC-XXXXXXXXXX\" using one of your other account numbers, or the account number of whoever should receive it. Once the balance is Rs 0.00, email us again and we will close the account.' : 'Once that is resolved, email us again and we will pick this straight back up.' }}\n\nNothing has been changed on your account.\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "d5285add-ab93-44bd-b59b-4f7fc70cd531",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "7fd6b03b-91a5-465e-9eed-eb45ff450eec",
+      "name": "Split Closure Confirmers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        1820
+      ],
+      "parameters": {
+        "jsCode": "// Everyone who holds the account has to confirm, the person who asked included.\n// One item per holder so each gets their own personally-addressed email.\nconst r = $input.first().json;\nconst emails = Array.isArray(r.holder_emails) ? r.holder_emails : [];\nconst requester = String(r.requester_email || '').toLowerCase();\n\nreturn emails.filter(Boolean).map(email => ({ json: {\n  holderEmail: email,\n  isRequester: String(email).toLowerCase() === requester,\n  isSoleHolder: Number(r.holder_count) === 1,\n  holder_count: Number(r.holder_count) || 1,\n  ref_code: r.ref_code,\n  account_number: r.account_number,\n  account_type: r.account_type,\n  requester_email: r.requester_email,\n  expires_at: r.expires_at\n} }));"
+      }
+    },
+    {
+      "id": "0add5360-0f8f-464a-b402-604e1cd0f792",
+      "name": "Ask Holder To Confirm Closure",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4760,
+        1820
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.holderEmail }}",
+        "subject": "=[{{ $json.ref_code }}] Confirm closing account {{ $json.account_number }}",
+        "emailType": "text",
+        "message": "=Hello,\n\n{{ $json.isRequester ? 'You asked us to close account ' + $json.account_number + '.' : $json.requester_email + ' has asked us to close account ' + $json.account_number + ', which you hold with them.' }}\n\nAccount: {{ $json.account_number }} ({{ $json.account_type }})\nBalance: Rs 0.00\n\nClosing an account is permanent. We cannot reopen it afterwards, and the account number is not reissued. So we will not act on the request until it is confirmed.\n\n{{ $json.isSoleHolder ? 'HOW TO CONFIRM' : 'HOW TO ANSWER - all ' + $json.holder_count + ' holders must agree before the account closes' }}\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both.\n\n{{ $json.isSoleHolder ? 'REJECT, or simply ignoring this email, leaves your account open and unchanged.' : 'A single REJECT from any holder stops the closure and the account stays open.' }} If nobody confirms by {{ $json.expires_at }} the request expires on its own and the account stays open.\n\nIf you did not expect this email, reply REJECT.\n\nDigital Bank Customer Support",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "71669ca4-5578-479c-b32d-49358171d521",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -4432,6 +4804,13 @@
         [
           {
             "node": "Deposit Funds",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resolve Account Closure Request",
             "type": "main",
             "index": 0
           }
@@ -5011,17 +5390,6 @@
         ]
       ]
     },
-    "Finalize LLM-Classified Intent": {
-      "main": [
-        [
-          {
-            "node": "Route by Intent",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Groq Chat Model (Intent Classifier)": {
       "ai_languageModel": [
         [
@@ -5106,18 +5474,7 @@
         ],
         [
           {
-            "node": "Route by Intent",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract Email Metadata": {
-      "main": [
-        [
-          {
-            "node": "Detect Reference Reply",
+            "node": "Detect Account Closure Intent",
             "type": "main",
             "index": 0
           }
@@ -5233,6 +5590,13 @@
         [
           {
             "node": "Send Reviewed Policy Answer to Customer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Policy Answer Rejected Email",
             "type": "main",
             "index": 0
           }
@@ -5674,6 +6038,137 @@
           }
         ]
       ]
+    },
+    "Extract Email Metadata": {
+      "main": [
+        [
+          {
+            "node": "Is Automated Sender?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Automated Sender?": {
+      "main": [
+        [
+          {
+            "node": "Ignore Automated Sender",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Detect Reference Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Policy Answer Rejected Email": {
+      "main": [
+        [
+          {
+            "node": "Confirm Decision to Ops Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize LLM-Classified Intent": {
+      "main": [
+        [
+          {
+            "node": "Detect Account Closure Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Account Closure Intent": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Account Closure Request": {
+      "main": [
+        [
+          {
+            "node": "Closure Request Understood?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closure Request Understood?": {
+      "main": [
+        [
+          {
+            "node": "Request Account Closure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Closure Clarification Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Account Closure": {
+      "main": [
+        [
+          {
+            "node": "Closure Request Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closure Request Accepted?": {
+      "main": [
+        [
+          {
+            "node": "Split Closure Confirmers",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Closure Blocked Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Closure Confirmers": {
+      "main": [
+        [
+          {
+            "node": "Ask Holder To Confirm Closure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -5681,7 +6176,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "6458edda-a6fd-440c-a732-b684feaedc82",
+  "versionId": "bf21ee94-effd-47ff-ab2b-0708dde49f70",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

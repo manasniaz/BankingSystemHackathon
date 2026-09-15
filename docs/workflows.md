@@ -82,3 +82,39 @@ A reply that contains both APPROVE and REJECT, or neither, is never guessed at: 
 `/webhook/approve-draft` and `/webhook/approve-loan` in WF-05 still work and are unchanged. They are now the fallback path rather than the primary one.
 
 Full root-cause writeup, including the two bugs found by live testing: `decisions.md` → "Session 9".
+
+## Session 10 changes (2026-09-15)
+
+### Policy documents are now documents
+
+Six readable policy documents live in [`docs/policy-documents/`](policy-documents/) and are the source of truth for every RAG answer. WF-09 gained a second branch that reads them from a Google Drive folder and seeds Pinecone namespace `banking_policy_v2`, so policy can be edited without touching code. See [`docs/policy-documents/README.md`](policy-documents/README.md) for the one-time setup and the namespace switch-over.
+
+The live bank still answers from namespace `banking_policy` until `v2` is verified. That is deliberate — the six documents rewrite the same subject matter as the original nineteen snippets, and having both retrievable risks a contradictory answer.
+
+### The RAG assistant now actually answers
+
+WF-04's agent no longer uses a structured-output parser. The only Groq model available on this account fails that call intermittently, which was sending correct, fully-grounded answers to human review with `confidence: 0`. The agent now returns labeled plain text, parsed by `Parse Agent Draft Output`. Verified live: grounded, confidence 1.0, answer sent directly with no human step.
+
+### New and changed per workflow
+
+- **WF-00** (137 → 146 nodes).
+  - `Is Automated Sender?` → `Ignore Automated Sender` sits immediately after `Extract Email Metadata`, ahead of everything including the reference-code branch. Mail from `no-reply@`, `mailer-daemon@`, `postmaster@`, bulk-mail domains and `accounts.google.com` ends there silently — no reply, no case, no lookup.
+  - `Route Ops Decision Outcome` gained a fourth branch, `Policy Answer Rejected`, so an ops REJECT on a policy draft sends the customer a graceful decline instead of nothing at all. The fallback moved from output 3 to output 4.
+  - **`ACCOUNT_CLOSURE` is a new intent.** `Detect Account Closure Intent` sits after both classifier paths converge and promotes `UNKNOWN` to `ACCOUNT_CLOSURE` on unmistakable wording. It never overrides a confident classification — a closure *question* stays `POLICY_RAG`, and "close it and send my balance to X" stays `TRANSFER`.
+  - Closure handler: `Resolve Account Closure Request` → `Closure Request Understood?` → `Request Account Closure` → `Closure Request Accepted?` → `Split Closure Confirmers` → `Ask Holder To Confirm Closure`, with `Send Closure Clarification Email` and `Send Closure Blocked Email` on the failure paths. `Route by Intent` gained rule 10; its fallback moved to output 11.
+- **WF-04**. Structured output parser removed, `Parse Agent Draft Output` added, agent set to retry twice on failure.
+- **WF-09**. Drive sync branch added: `Sync From Drive Trigger` → `Drive Folder Config` → `List Policy Documents in Drive` → `Download Policy Document` → `Extract Document Text` → `Prepare Drive Policy Document` → `Skip Unreadable Files` → `Seed Policy Docs From Drive`.
+
+### Closing an account
+
+A closure request never closes anything on its own. Every holder, **including the person who asked**, must reply `APPROVE` to an emailed `JNT-` reference code — closure is irreversible and a single unverified sentence in an email is not enough to act on.
+
+Blocked up front, with the reason stated in plain language, when the account has: a non-zero balance (the amount is quoted and the customer is told to transfer it out first), an active hold, an active standing order paying out of it, an outstanding or pending loan, or a frozen status.
+
+The confirm-and-execute half needed no new code — `respond_to_joint_action_by_ref()` and `finalize_joint_action_if_complete()` already handled `action_type = 'close_account'` from Session 9.
+
+### A recurring hazard worth naming
+
+Adding a rule to an n8n Switch shifts its fallback output index. This project has now been bitten three times (Sessions 7, 9, 10). Rewiring connections and adding the rule are separate operations, and between them the fallback is mis-aimed — in this session's case, briefly routing every unclassified email in the bank into the account-closure flow. Run the rule-count-versus-connection-count audit after every switch change.
+
+Full root-cause writeup: `decisions.md` → "Session 10".

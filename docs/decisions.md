@@ -231,3 +231,63 @@ This also switched on a feature that had been inert since Session 2: `promote_mi
 **Verified live, by direct RPC against the real database:** ops approval created, then approved as "ops", disbursing the loan and its repayment standing order, with the double-decide, unknown-reference and unparseable-decision guards all returning the right refusal; both-signature transfer parked, non-holder refused, co-holder signed with a fresh assessment, transfer executed; the same flow again with an over-balance amount, confirming it fails cleanly and stays pending with `last_error` set; account opening refused for a 14-year-old and accepted for a 31-year-old; guardian consent refused for the wrong responder and for a premature finalize, then accepted, then the account opened with the correct holder types; a minor blocked from transferring out of their own account, a non-holder blocked, and the guardian transferring successfully. `run_reconciliation()` passed clean (`total_debits == total_credits`, zero discrepancies) after every one of these.
 
 **Not independently tested:** anything reachable only through WF-00's Gmail trigger, which cannot be invoked through the available tooling. The reply-parsing logic was exercised against nine realistic Gmail reply shapes (approve with a quoted original, reject with a `NOTE:` line, an ambiguous "approve or reject", an impostor quoting an `OPS-` code from the wrong address, guardian approve, co-holder reject with an Outlook-style quote block, two ordinary customer emails, and a subject-line-only reply) in an offline harness, and the full 134-node graph was re-audited for orphans, dangling targets, unwired switch outputs and `$('Node')` references to nodes that don't exist. But no real inbound email has traversed the new branches.
+
+### Session 10: the RAG answer that was never broken, plus closure, automated senders, and a silent dead end
+
+Four problems reported from real inbound email. Three were bugs; one was a misdiagnosis worth writing down, because the wrong fix would have been expensive.
+
+**1. "The RAG throws everything at human support — where are the policy documents even coming from?"**
+
+The reported symptom was that a perfectly ordinary question — *"what's the account opening policy, and how is the loan policy"* — came back as "a specialist will review this", and the ops alert showed `Confidence: 0`. The natural reading is that retrieval found nothing, i.e. that the knowledge base is empty or missing.
+
+That reading was wrong, and it is worth being precise about why. Pulling execution 248 apart showed the agent called the Pinecone tool **twice, and both calls returned exactly the right documents** — the account-opening policy and the loan policy, verbatim, near the top of the results. Retrieval was flawless. What actually failed was the step *after* retrieval: the agent's attempt to return its answer as structured JSON, which errored with `Your request is invalid or could not be processed by the service`.
+
+This is the same failure mode already hit and fixed once in Session 8, where `openai/gpt-oss-safeguard-20b` — the only Groq model available on this account — silently returned an empty tool call when paired with a structured-output parser, and the fix was to switch that path to plain-text output. That fix was applied to the intent classifier and **never applied to the RAG drafting agent**, which still used `outputParserStructured`. So every policy question was reaching a correct, grounded answer and then throwing it away at the last step, and the safety-first fallback did exactly what it was designed to do — refuse to guess, route to a human — for entirely the wrong reason.
+
+Fixed by giving the agent a plain-text contract (`DRAFT:` / `GROUNDED:` / `CONFIDENCE:` / `CITATIONS:` / `NEEDS_HUMAN:` on labeled lines) and parsing it in a Code node into the same `{ output: {...} }` envelope the rest of the workflow already consumed, so nothing downstream changed. The agent node also got `retryOnFail` with two attempts, for transient failures that aren't about output format.
+
+Had the symptom been taken at face value, the "fix" would have been to rebuild the knowledge base — hours of work on the one part of the system that was already working perfectly.
+
+**A bug in the fix, caught by testing it.** The first version of the parser used the `m` regex flag. With `m`, `$` matches end-of-*line*, so the lazy capture for `DRAFT:` stopped at the first blank line. The live test came back grounded and confident with a clean answer — about account opening only. The customer had asked two questions and the loan half had been silently truncated. Anchoring line starts explicitly with `(?:^|\n)` and dropping the `m` flag fixed it; the re-test returned both paragraphs in full. A parser that returns *something* plausible is the worst kind to eyeball rather than test.
+
+**2. The bank was auto-replying to `no-reply@accounts.google.com`.**
+
+A Google security notification landed in the bank inbox, was treated as a customer email, failed the profile lookup, and got the "your email address is not registered with any active customer account" reply — sent to a no-reply address at Google. Harmless here, but the general shape is not: an automated system replying to another automated system is how mail loops start, and it means real bank mail is being generated in response to machine noise.
+
+A guard now runs immediately after metadata extraction and before anything else, matching known automated senders on both the local part (`no-reply`, `mailer-daemon`, `postmaster`, `bounce`, `notifications`, `alerts`, …) and the domain (`accounts.google.com`, bulk-mail providers). A match ends the execution silently: no reply, no support case, no profile lookup. It sits ahead of the reference-code branch deliberately — an automated sender should not be able to reach *any* logic, not merely the customer-facing part.
+
+**3. An ops REJECT on a policy answer left the customer in total silence.**
+
+`Route Ops Decision Outcome` had explicit branches for loan-approved, loan-rejected and policy-approved, and everything else fell through to "no customer email needed". That caught `support_draft` + `reject`. So the sequence was: the customer is told *"you'll receive a follow-up email shortly with the verified answer"*, ops declines the draft, and then — nothing, ever.
+
+The original design note said REJECT "closes the case without emailing the customer", and in isolation that is defensible for spam. But it is indefensible directly after an explicit promise of a follow-up. Added a fourth branch and a graceful decline that tells the customer we can't give a confirmed answer by email, carries the ops note if one was written, and invites them to reply with more detail. Silence is not a decision the customer can act on.
+
+**4. "Delete my account" was not an intent at all.**
+
+There was no `ACCOUNT_CLOSURE` intent, so the request fell through the classifier to `UNKNOWN` and got the generic "our banking assistant could not automatically process your request" reply — for one of the most basic things a customer can ask a bank.
+
+Rather than duplicate closure keywords into both the regex classifier and the LLM path (two ~4KB Code nodes that must be kept byte-identical, a maintenance trap), the rule lives in one new node placed after both paths converge. It **only ever promotes `UNKNOWN`**, which matters: *"what is your account closure policy"* classifies as `POLICY_RAG` and must stay there, and *"close my account and send the balance to ACC-123"* classifies as `TRANSFER` and must stay there — overriding either would actively harm the customer. A confident classification is never second-guessed.
+
+The closure flow itself reuses machinery already built in Session 9 rather than adding a parallel one. `finalize_joint_action_if_complete()` already executed `close_account` for `action_type = 'close_account'`, and `respond_to_joint_action_by_ref()` already handled a holder replying to a `JNT-` code — so the entire confirm-and-execute half existed and needed no new code.
+
+What it did need was a real confirmation step. `request_joint_closure()` inserted the requester's own consent automatically, which on a single-holder account meant `required = 1, consents = 1` and the account closed **instantly** on one unverified sentence in an email. Removing that auto-consent makes every holder — the requester included — confirm via the emailed code, which gives single-holder customers an "are you sure" gate for free and unifies single and joint closure under one mechanism.
+
+`request_account_closure()` runs the blocking checks up front and returns plain language: non-zero balance (with the amount and instructions to transfer it out), active holds, active standing orders, an outstanding or pending loan, already closed, frozen. Doing this before creating the request matters — otherwise the customer gets a confirmation email for a closure that can never succeed, confirms it, and hits an error. Added the loan check that did not exist in `close_account()`: an outstanding loan is a debt to the bank and the account it is repaid from cannot simply disappear.
+
+The handler also refuses to guess which account to close when the customer holds several, and refuses a closure request from a minor holder on a guardian-supervised account.
+
+**A near-miss worth recording.** Adding the eleventh rule to `Route by Intent` shifts the fallback from output index 10 to index 11. The connections were rewired first, in a separate operation from adding the rule — and between those two calls, output 10 was still the fallback, meaning *every unclassified email in the bank* was briefly routed into the account-closure flow. This is the third time in this project that adding a switch rule has silently repointed a fallback (Sessions 7 and 9 both hit it). The audit script that checks rule count against connection count is what catches it; it should be run after every switch change, not just at the end of a session.
+
+**5. Policy documents now exist as documents.**
+
+The complaint that the policy documents "should be somewhere but I couldn't find them anywhere" was fair even though retrieval worked. They existed only as string literals inside an n8n Code node and as a flat list in `docs/policies.md` — nothing a person could sensibly read, review or edit as bank policy.
+
+They are now six real documents in [`docs/policy-documents/`](policy-documents/), rewritten and consolidated from the nineteen snippets: accounts and eligibility, payments and transfers, joint accounts, borrowing and deposits, security/fraud/disputes, and privacy/terms/service standards. They read as policy rather than as retrieval chunks.
+
+WF-09 gained a second, independent branch that reads these from a **Google Drive folder** instead of from code, so policy can be edited by someone who has never opened n8n. It seeds a **separate Pinecone namespace** (`banking_policy_v2`) rather than the live one. That is the important design decision: the six documents are a rewrite of the same subject matter, so seeding them alongside the originals would leave the assistant able to retrieve an old chunk that contradicts a new one — in a banking context, a fee or limit that disagrees with itself. Seeding a parallel namespace means the live bank keeps answering from `banking_policy` until `v2` is verified, the switch-over is one field in WF-04, and rolling back is the same one field.
+
+The Drive branch is **built but not yet exercised**: it needs the six files in a Drive folder and that folder's ID in the `Drive Folder Config` node. Deleting and re-seeding the live namespace was deliberately not automated — a destructive operation against the one component that was verified working is not something to add untested.
+
+**Verified live:** the RAG fix twice via direct sub-workflow execution (grounded, confidence 1.0, answer sent directly with no human step, both questions answered in full after the truncation fix); account closure end to end by RPC — blocked on non-zero balance with the amount quoted, refused for a non-holder, created for a valid request, refused for a non-holder replying to the code, then confirmed and the account actually closed; `run_reconciliation()` clean after all of it. The 146-node WF-00 graph re-audited for orphans, dangling targets, unwired switch outputs, switch-rule/connection alignment and bad `$('Node')` references.
+
+**Not verified:** the automated-sender guard, the closure email chain and the ops-reject email, all of which are only reachable through the Gmail trigger; and the Drive sync, which needs the folder. The Drive branch in particular should be treated as untested until it has run once.

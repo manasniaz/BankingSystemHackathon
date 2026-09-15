@@ -106,9 +106,9 @@
       "parameters": {
         "promptType": "define",
         "text": "={{ ($('Extract Case ID').item.json.isReturning ? 'Note: this person has contacted us within the last 10 minutes -- treat them as a returning visitor in tone, but still answer strictly from retrieved policy documents.\\n\\n' : '') + $json.inquiry }}",
-        "hasOutputParser": true,
+        "hasOutputParser": false,
         "options": {
-          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) Call the Policy Knowledge Base tool AT MOST TWICE total, with two different phrasings of the question. Do not call it a third time under any circumstances.\n(4) If both searches return no results or nothing relevant, STOP SEARCHING IMMEDIATELY and return your final answer with grounded=false, confidence=0, needs_human=true, and a draft explaining our policy documents don't cover this yet.\n(5) If retrieved policy does not clearly cover the question, set grounded=false, needs_human=true.\n(6) List doc_ids in citations.\n(7) Return ONLY structured JSON: draft (string), grounded (boolean), confidence (number 0-1), citations (array), needs_human (boolean)."
+          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) Call the Policy Knowledge Base tool AT MOST TWICE total, with two different phrasings of the question. Do not call it a third time under any circumstances.\n(4) If both searches return no results or nothing relevant, STOP SEARCHING IMMEDIATELY and give a final answer with GROUNDED: false, CONFIDENCE: 0, NEEDS_HUMAN: true, and a DRAFT explaining our policy documents don't cover this yet.\n(5) If retrieved policy does not clearly cover the question, set GROUNDED: false, NEEDS_HUMAN: true.\n\nYOUR FINAL ANSWER MUST BE PLAIN TEXT IN EXACTLY THIS FORMAT, WITH EACH LABEL AT THE START OF ITS OWN LINE. DO NOT USE JSON. DO NOT ADD ANY TEXT BEFORE 'DRAFT:' OR AFTER 'NEEDS_HUMAN:'. DO NOT WRAP IN CODE FENCES:\n\nDRAFT: <the exact reply text to send the customer, in full sentences>\nGROUNDED: true or false\nCONFIDENCE: a number between 0 and 1\nCITATIONS: comma-separated doc_id values, or NONE\nNEEDS_HUMAN: true or false"
         }
       },
       "id": "a342f61b-67eb-4d07-841f-b2164cd0a2b4",
@@ -119,7 +119,10 @@
         800,
         112
       ],
-      "onError": "continueErrorOutput"
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 800
     },
     {
       "parameters": {
@@ -189,19 +192,6 @@
           "name": "Google Gemini API"
         }
       }
-    },
-    {
-      "parameters": {
-        "jsonSchemaExample": "{\n  \"draft\": \"Official policy response based strictly on retrieved facts.\",\n  \"grounded\": true,\n  \"confidence\": 0.95,\n  \"citations\": [\"doc_wire_policy_01\"],\n  \"needs_human\": false\n}"
-      },
-      "id": "eadc87fa-cbe0-45a4-afb6-9f3c066c2ff9",
-      "name": "Draft Output Parser",
-      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
-      "typeVersion": 1.2,
-      "position": [
-        1104,
-        224
-      ]
     },
     {
       "parameters": {
@@ -654,6 +644,19 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "3c9d41f7-5a62-4b80-9e33-71a4c6d5e908",
+      "name": "Parse Agent Draft Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The agent answers in plain text (see the system prompt) instead of structured\n// JSON, because the Groq model available on this account\n// (openai/gpt-oss-safeguard-20b) intermittently fails a structured-output call\n// outright -- confirmed live: retrieval succeeded perfectly and the agent still\n// errored trying to emit JSON. Plain text with labeled lines is far more robust\n// against that failure mode. Output is reshaped into the same { output: {...} }\n// envelope the rest of the workflow already expects, so nothing downstream changed.\nconst raw = String($json.output || $json.text || '').trim();\n\nconst LABELS = 'DRAFT|GROUNDED|CONFIDENCE|CITATIONS|NEEDS_HUMAN';\n\nfunction field(label) {\n  // NOTE: deliberately NO 'm' flag. With it, `$` matches end-of-LINE, so the lazy\n  // capture below stops at the first blank line and a two-paragraph answer gets\n  // truncated to its first paragraph -- which is exactly what happened on the\n  // first live test. Line-start is anchored explicitly with (?:^|\\n) instead.\n  const re = new RegExp(\n    '(?:^|\\\\n)[ \\\\t]*' + label + '[ \\\\t]*:[ \\\\t]*([\\\\s\\\\S]*?)(?=\\\\n[ \\\\t]*(?:' + LABELS + ')[ \\\\t]*:|$)',\n    'i'\n  );\n  const m = raw.match(re);\n  return m ? m[1].trim() : null;\n}\n\nconst draftText = field('DRAFT');\nconst groundedText = field('GROUNDED');\nconst confidenceText = field('CONFIDENCE');\nconst citationsText = field('CITATIONS');\nconst needsHumanText = field('NEEDS_HUMAN');\n\n// If the model didn't follow the format at all, fail safe exactly like an agent\n// error: no draft, not grounded, needs a human. Never guess a confident answer\n// out of unparseable text.\nif (!draftText) {\n  return [{ json: { output: {\n    draft: 'Thank you for contacting Digital Bank. We were unable to find a confirmed answer to your question in our policy documents. A specialist will review your question and send you an accurate, verified answer shortly.',\n    grounded: false, confidence: 0, citations: [], needs_human: true,\n    parse_failed: true, raw_output: raw.slice(0, 500)\n  } } }];\n}\n\nconst grounded = /^true$/i.test(groundedText || '');\nlet confidence = parseFloat(confidenceText);\nif (isNaN(confidence)) confidence = 0;\nconfidence = Math.max(0, Math.min(1, confidence));\n\nconst citations = (citationsText && !/^none$/i.test(citationsText))\n  ? citationsText.split(',').map(s => s.trim()).filter(Boolean)\n  : [];\n\nconst needsHuman = needsHumanText ? /^true$/i.test(needsHumanText) : !grounded;\n\nreturn [{ json: { output: {\n  draft: draftText, grounded, confidence, citations, needs_human: needsHuman\n} } }];"
+      }
     }
   ],
   "connections": {
@@ -745,22 +748,11 @@
         ]
       ]
     },
-    "Draft Output Parser": {
-      "ai_outputParser": [
-        [
-          {
-            "node": "Draft Grounded Reply",
-            "type": "ai_outputParser",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Draft Grounded Reply": {
       "main": [
         [
           {
-            "node": "Grounded & Confident? (>= 0.7)",
+            "node": "Parse Agent Draft Output",
             "type": "main",
             "index": 0
           }
@@ -908,6 +900,17 @@
           }
         ]
       ]
+    },
+    "Parse Agent Draft Output": {
+      "main": [
+        [
+          {
+            "node": "Grounded & Confident? (>= 0.7)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -915,7 +918,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "6e7878d2-7c1f-459e-82ff-e1893d682f1f",
+  "versionId": "8ede640e-f6a7-4815-b7b7-3282eefc4b6d",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
