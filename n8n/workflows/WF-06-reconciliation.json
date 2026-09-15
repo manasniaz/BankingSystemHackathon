@@ -210,6 +210,47 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "d465ef9c-4f6e-4662-a915-e942e7687743",
+      "name": "Execute Supabase RPC promote_minors_to_adult",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -800,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/promote_minors_to_adult",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
     }
   ],
   "connections": {
@@ -218,6 +259,11 @@
         [
           {
             "node": "Format Run Date",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute Supabase RPC promote_minors_to_adult",
             "type": "main",
             "index": 0
           }
@@ -274,6 +320,17 @@
           }
         ]
       ]
+    },
+    "Execute Supabase RPC promote_minors_to_adult": {
+      "main": [
+        [
+          {
+            "node": "Format Run Date",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -281,7 +338,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "0efbbe73-cf1a-48b6-9a85-66e724dfabb5",
+  "versionId": "63a9ea81-be10-401a-8ff6-029f0f735114",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

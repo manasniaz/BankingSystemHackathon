@@ -113,7 +113,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/execute_transfer",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/initiate_transfer",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
@@ -137,7 +137,7 @@
         }
       },
       "id": "10f30af4-1ad6-40dc-8223-bc733a656a65",
-      "name": "Execute Supabase RPC execute_transfer",
+      "name": "Execute Supabase RPC initiate_transfer",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -150,40 +150,6 @@
           "name": "Supabase account"
         }
       }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 2
-          },
-          "combinator": "and",
-          "conditions": [
-            {
-              "id": "rpc-success",
-              "leftValue": "={{ $json.success }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true",
-                "singleValue": true
-              }
-            }
-          ]
-        },
-        "options": {}
-      },
-      "id": "c33032fd-539b-4079-b82d-0bec0f9a2895",
-      "name": "Check RPC Result",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [
-        800,
-        112
-      ]
     },
     {
       "parameters": {
@@ -292,6 +258,122 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "062360a2-781c-4216-8d2b-f8b58a5dba31",
+      "name": "Classify RPC Result",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        800,
+        60
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "has-tx",
+                    "leftValue": "={{ $json.transaction_id }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "exists",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              },
+              "outputKey": "Completed",
+              "renameOutput": true
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "is-pending",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "pending",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "Pending",
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Failed"
+        }
+      }
+    },
+    {
+      "id": "f3349792-c348-40a6-b32a-5aa2b780e8a0",
+      "name": "Transfer Pending Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1008,
+        104
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "tx_pending_success",
+              "name": "success",
+              "type": "boolean",
+              "value": true
+            },
+            {
+              "id": "tx_pending_status",
+              "name": "status",
+              "type": "string",
+              "value": "pending_additional_signatures"
+            },
+            {
+              "id": "tx_pending_joint_id",
+              "name": "joint_action_id",
+              "type": "string",
+              "value": "={{ $json.joint_action_id }}"
+            },
+            {
+              "id": "tx_pending_required",
+              "name": "required",
+              "type": "number",
+              "value": "={{ $json.required }}"
+            },
+            {
+              "id": "tx_pending_consents",
+              "name": "consents_count",
+              "type": "number",
+              "value": "={{ $json.consents_count }}"
+            }
+          ]
+        },
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -332,36 +414,7 @@
       "main": [
         [
           {
-            "node": "Execute Supabase RPC execute_transfer",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Transfer Failed Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Execute Supabase RPC execute_transfer": {
-      "main": [
-        [
-          {
-            "node": "Check RPC Result",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check RPC Result": {
-      "main": [
-        [
-          {
-            "node": "Transfer Successful Result",
+            "node": "Execute Supabase RPC initiate_transfer",
             "type": "main",
             "index": 0
           }
@@ -385,6 +438,42 @@
           }
         ]
       ]
+    },
+    "Execute Supabase RPC initiate_transfer": {
+      "main": [
+        [
+          {
+            "node": "Classify RPC Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify RPC Result": {
+      "main": [
+        [
+          {
+            "node": "Transfer Successful Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transfer Pending Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transfer Failed Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -392,7 +481,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "41819eef-1d69-4c01-aaef-9b4eed5ecb99",
+  "versionId": "c2df29a9-af45-46b4-bffb-efafb17db062",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

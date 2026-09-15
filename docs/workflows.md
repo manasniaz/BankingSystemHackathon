@@ -10,7 +10,9 @@ The full operator manual (credentials, import/activation order, real Gmail test 
 | WF-03 Fraud Hold | Sub-workflow + webhook (`/webhook/assess-fraud`) | Calls the Python fraud microservice, places a full-account freeze via `place_account_hold()` on high risk, alerts ops. |
 | WF-04 RAG Support | Sub-workflow + webhook (`/webhook/support-case`) | LangChain agent (Groq + Pinecone + Gemini) drafts a grounded policy answer, or falls back to "needs human" below a 0.7 confidence/grounded threshold. |
 | WF-05 Human Approval | Webhook (`/webhook/approve-draft`) | The only path that can send a RAG draft to a customer. Approve / edit / reject, with an audit log entry either way. |
-| WF-06 Reconciliation | Schedule (midnight UTC) | Calls `run_reconciliation()`, alerts ops on any ledger discrepancy. |
+| WF-06 Reconciliation | Schedule (midnight UTC) | Calls `run_reconciliation()`, alerts ops on any ledger discrepancy. Also runs `promote_minors_to_adult()` on the same schedule. |
+| WF-08 Joint Invitation Expiry Sweep | Schedule (every minute) | Calls `expire_stale_joint_invitations()`, emails each inviter whose invitation expired unanswered. |
+| WF-09 Seed Policy Documents | Manual/one-time utility | Embeds the 11 PKR-denominated policy documents into Pinecone via Gemini embeddings — re-run after any Pinecone index recreation. |
 
 ## Changes made in the 2026-09-14 review
 

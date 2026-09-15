@@ -21,7 +21,9 @@ Modern banking demands seamless email interaction without sacrificing financial 
 2. **Deterministic Fraud Boundaries**: High-risk transactions trigger automated account freezes before ledger execution based on velocity, amount, and recipient history.
 3. **Human-in-the-Loop RAG Governance**: AI support drafts generated via RAG are saved to an internal approval queue (`support_case_drafts`). No AI response reaches a customer without explicit human operator validation.
 
-> 📋 **This capstone is graded on justified engineering judgment, not just working code.** [`docs/decisions.md`](docs/decisions.md) walks through all 32 edge cases from the assignment brief — what's built, what's deliberately scoped out, and the reasoning for each call.
+> 📋 **This capstone is graded on justified engineering judgment, not just working code.** [`docs/decisions.md`](docs/decisions.md) walks through all 32 edge cases from the assignment brief — what's built, what's deliberately scoped out, and the reasoning for each call. See the doc's **Session 2 Addendum** for self-service + joint account opening, either-or vs. both-signature transfer authority, majority-vote governance, minor/guardian accounts, and a public (non-customer) RAG chatbot — all added after the initial audit.
+
+> 💱 **Currency: PKR (Pakistani Rupees).** All accounts, transfers, standing orders, and fraud thresholds are denominated in PKR; amounts are stored as `BIGINT` paisa (1 PKR = 100 paisa), the same integer-minor-unit design the schema always used for USD cents. A handful of legacy `$`/USD examples remain further down this README from before the currency switch — the live system and every current code path use PKR.
 
 ---
 
@@ -30,12 +32,15 @@ Modern banking demands seamless email interaction without sacrificing financial 
 | Component / Layer | Implementation Status | Deployment Environment | Live / Active Target |
 |---|---|---|---|
 | **Bank Gmail Intake** | ✅ Implemented | Live Google Workspace / Gmail | `metonystar1@gmail.com` |
-| **n8n Orchestration Plane** | ✅ Implemented | n8n Cloud | 7 Core Workflows Active |
-| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 15 Tables + 11 Atomic RPCs |
+| **n8n Orchestration Plane** | ✅ Implemented | n8n Cloud | 9 Workflows Active (WF-00 to WF-06, WF-08, WF-09) |
+| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 16 Tables + 20+ Atomic RPCs, currency: PKR |
 | **Fraud Scoring Engine** | ✅ Implemented | Python FastAPI Microservice | `POST /assess-fraud` |
-| **Policy RAG Vector Search** | ✅ Implemented | Pinecone Vector Database | Index: `banking-policy-index` (ns: `banking_policy`) |
+| **Self-Service Account Opening** | ✅ Implemented | n8n (WF-00) + Supabase Auth Admin API | Single + joint accounts, no manual KYC |
+| **Joint Account Invitations** | ✅ Implemented | n8n (WF-00, WF-08) + Supabase | 5-minute accept/decline window, auto-expiry |
+| **Public RAG Support Chatbot** | ✅ Implemented | n8n (WF-04) | Answers anyone, not just customers |
+| **Policy RAG Vector Search** | ⚠️ Wired, needs reindex | Pinecone Vector Database | Index: `banking-policy-index` (ns: `banking_policy`) — see [Known Dependencies](#-known-dependencies--architectural-boundaries) |
 | **LLM Support Drafting** | ✅ Implemented | Groq Cloud | `llama-3.3-70b-versatile` |
-| **Text Embeddings Engine** | ✅ Implemented | Google Gemini API | `text-embedding-004` |
+| **Text Embeddings Engine** | ✅ Implemented | Google Gemini API | `gemini-embedding-001` |
 | **Human Approval Queue** | ✅ Implemented | n8n Webhook Gate | `POST /webhook/approve-draft` |
 
 ---
@@ -464,14 +469,16 @@ Judges and evaluators can test the live autonomous banking platform directly by 
 2. **Fraud Microservice Reachability**: n8n must be able to reach `PYTHON_SERVICE_URL`. If the microservice is offline, `WF-03` defaults to a defensive safety hold.
 3. **Pinecone Indexing**: RAG policy retrieval requires pre-populated vector embeddings in Pinecone (`banking-policy-index`, namespace `banking_policy`).
 
-### ⚠️ Two open action items (found during the 2026-09-14 audit, need a manual fix)
+### ⚠️ One open action item
 
-These require entering a secret/dashboard action that shouldn't be done by an automated agent, so they're flagged here instead of silently fixed:
+Railway's Supabase env vars are fixed. The remaining item requires a Pinecone console action:
 
-1. **Railway Python service is missing its Supabase env vars.** A live test call to `/assess-fraud` returned `{"detail":"Supabase credentials missing from environment configuration"}`. Fix: open the Railway project → Variables, and set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (values from Supabase → Project Settings → API). The n8n side of this connection was also broken (the `PYTHON_SERVICE_URL` instance variable is stored without an `https://` scheme) — that half is already fixed in WF-00 and WF-03.
-2. **The Pinecone index `banking-policy-index` doesn't exist yet** — a live test call returned HTTP 404. RAG support degrades gracefully to a "needs human review" draft rather than crashing, but there's no real grounded retrieval happening until the index is created (cosine metric, 768 dimensions to match Gemini `text-embedding-004`) and seeded with actual policy documents.
+1. **The Pinecone index `banking-policy-index` needs to be recreated at 3072 dimensions.** It was created at 768 dimensions (matching the older `text-embedding-004` model this project was originally built around), but Google has since retired that model — the current one, `gemini-embedding-001`, only outputs its full 3072-dimension vector through n8n's LangChain node (no truncation parameter exposed). The index currently has zero vectors in it, so this is a clean recreate:
+   - Pinecone console → delete `banking-policy-index` → create it again, same name, **3072 dimensions**, `cosine` metric.
+   - Then re-run the **WF-09 Seed Policy Documents** workflow once (n8n Cloud → Executions → run manually) to load the 11 policy documents.
+   - Until this is done, RAG support degrades gracefully to a "needs human review" draft rather than crashing — a real bug in that fallback path (an infinite retry loop on empty search results) was also found and fixed this session.
 
-Full list of what was checked, fixed, and left open: [`docs/decisions.md`](docs/decisions.md#known-live-issues-at-time-of-this-audit-2026-09-14).
+Full list of what was checked, fixed, and left open: [`docs/decisions.md`](docs/decisions.md#known-live-issues-at-time-of-this-audit-2026-09-14) and its [Session 2 Addendum](docs/decisions.md#session-2-addendum-account-opening-joint-invitations-pkr-governance-public-rag).
 
 ---
 

@@ -36,7 +36,7 @@ class TestFraudService(unittest.TestCase):
         payload = {
             "account_id": "00000000-0000-0000-0000-000000000001",
             "amount": 1000,
-            "currency": "USD",
+            "currency": "PKR",
             "profile_id": None,
             "transaction_context": {}
         }
@@ -84,8 +84,8 @@ class TestFraudService(unittest.TestCase):
 
         payload = {
             "account_id": "00000000-0000-0000-0000-000000000001",
-            "amount": 10000, # $100.00
-            "currency": "USD",
+            "amount": 10000, # Rs 100.00
+            "currency": "PKR",
             "profile_id": None,
             "transaction_context": {}
         }
@@ -140,8 +140,8 @@ class TestFraudService(unittest.TestCase):
 
         payload = {
             "account_id": "00000000-0000-0000-0000-000000000001",
-            "amount": 600000, # $6,000 > $5,000 threshold (+30 pts). Velocity > 5 (+50 pts) -> score 80 >= 75
-            "currency": "USD",
+            "amount": 60000000, # Rs 600,000 > Rs 500,000 threshold (+30 pts). Velocity > 5 (+50 pts) -> score 80 >= 75
+            "currency": "PKR",
             "profile_id": None,
             "transaction_context": {"destination_account_id": "00000000-0000-0000-0000-000000000002"}
         }

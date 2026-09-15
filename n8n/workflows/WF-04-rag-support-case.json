@@ -2,29 +2,7 @@
   "name": "WF-04 RAG Support",
   "nodes": [
     {
-      "parameters": {
-        "inputSource": "workflowInputs",
-        "workflowInputs": {
-          "values": [
-            {
-              "name": "profile_id",
-              "type": "string"
-            },
-            {
-              "name": "customer_email",
-              "type": "string"
-            },
-            {
-              "name": "subject",
-              "type": "string"
-            },
-            {
-              "name": "inquiry",
-              "type": "string"
-            }
-          ]
-        }
-      },
+      "parameters": {},
       "id": "169ddad4-17e3-4348-834e-f1d91cfc8dd1",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
@@ -53,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// No hardcoded identity fallbacks. profile_id must come from the verified Gmail sender.\nconst profileId = body.profile_id;\nif (!profileId || !uuidRegex.test(String(profileId).trim())) {\n  throw new Error('profile_id is required and must be a valid UUID resolved from the verified email sender');\n}\n\nconst inquiry = String(body.inquiry || body.bodyText || '').trim();\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: String(profileId).trim(),\n      customer_email: String(body.customer_email || '').trim(),\n      subject: String(body.subject || 'General Banking Inquiry').trim(),\n      inquiry: inquiry\n    }\n  }\n}];"
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Public RAG access: profile_id is optional. Anyone can ask a policy question;\n// a bank customer is simply recognized (profile_id set), everyone else is\n// tracked by their verified sender email only (customer_email).\nconst profileId = body.profile_id && uuidRegex.test(String(body.profile_id).trim()) ? String(body.profile_id).trim() : null;\nconst customerEmail = String(body.customer_email || '').trim().toLowerCase();\n\nif (!profileId && !customerEmail) {\n  throw new Error('Either profile_id or customer_email is required to identify the inquirer');\n}\n\nconst inquiry = String(body.inquiry || body.bodyText || '').trim();\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: profileId,\n      customer_email: customerEmail,\n      inquirer_type: profileId ? 'customer' : 'public',\n      subject: String(body.subject || 'General Banking Inquiry').trim(),\n      inquiry: inquiry\n    }\n  }\n}];"
       },
       "id": "71f8510f-be32-4a0d-b4ae-428735e405c3",
       "name": "Validate Support Request Payload",
@@ -72,6 +50,14 @@
             {
               "fieldId": "profile_id",
               "fieldValue": "={{ $json.params.profile_id }}"
+            },
+            {
+              "fieldId": "customer_email",
+              "fieldValue": "={{ $json.params.customer_email }}"
+            },
+            {
+              "fieldId": "inquirer_type",
+              "fieldValue": "={{ $json.params.inquirer_type }}"
             },
             {
               "fieldId": "subject",
@@ -105,7 +91,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const caseRow = $input.first().json;\nconst caseId = caseRow.id || (Array.isArray(caseRow) ? caseRow[0]?.id : `case_${Date.now()}`);\nconst params = $('Validate Support Request Payload').item.json.params;\n\nreturn [{\n  json: {\n    case_id: caseId,\n    profile_id: params.profile_id,\n    subject: params.subject,\n    inquiry: params.inquiry,\n    customer_email: params.customer_email\n  }\n}];"
+        "jsCode": "const params = $('Validate Support Request Payload').item.json.params;\nconst caseInsertResult = $('Create Support Case in Supabase').item.json;\nconst caseId = caseInsertResult.id;\nconst recentCases = $input.all();\nconst isReturning = Array.isArray(recentCases) && recentCases.length > 1;\n\nreturn [{\n  json: {\n    case_id: caseId,\n    profile_id: params.profile_id,\n    subject: params.subject,\n    inquiry: params.inquiry,\n    customer_email: params.customer_email,\n    inquirer_type: params.inquirer_type,\n    isReturning\n  }\n}];"
       },
       "id": "b3e44677-6654-499f-bb75-2a2fb9b585a6",
       "name": "Extract Case ID",
@@ -119,10 +105,10 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ $json.inquiry }}",
+        "text": "={{ ($('Extract Case ID').item.json.isReturning ? 'Note: this person has contacted us within the last 10 minutes -- treat them as a returning visitor in tone, but still answer strictly from retrieved policy documents.\\n\\n' : '') + $json.inquiry }}",
         "hasOutputParser": true,
         "options": {
-          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) If retrieved policy does not clearly cover the question, set grounded=false, needs_human=true.\n(4) List doc_ids in citations.\n(5) Return ONLY structured JSON: draft (string), grounded (boolean), confidence (number 0-1), citations (array), needs_human (boolean)."
+          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) Call the Policy Knowledge Base tool AT MOST TWICE total, with two different phrasings of the question. Do not call it a third time under any circumstances.\n(4) If both searches return no results or nothing relevant, STOP SEARCHING IMMEDIATELY and return your final answer with grounded=false, confidence=0, needs_human=true, and a draft explaining our policy documents don't cover this yet.\n(5) If retrieved policy does not clearly cover the question, set grounded=false, needs_human=true.\n(6) List doc_ids in citations.\n(7) Return ONLY structured JSON: draft (string), grounded (boolean), confidence (number 0-1), citations (array), needs_human (boolean)."
         }
       },
       "id": "a342f61b-67eb-4d07-841f-b2164cd0a2b4",
@@ -132,7 +118,8 @@
       "position": [
         800,
         112
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -179,13 +166,15 @@
       ],
       "credentials": {
         "pineconeApi": {
-          "id": "I2iSFV2W31PGiVaK",
+          "id": "5T49ZfPpkS1OzAm0",
           "name": "Pinecone account"
         }
       }
     },
     {
-      "parameters": {},
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
       "id": "47d50c41-fc63-4605-8632-efd1676a87b3",
       "name": "Gemini Embeddings",
       "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
@@ -306,7 +295,7 @@
               "id": "fallback-draft",
               "name": "groq_draft",
               "type": "string",
-              "value": "=Thank you for contacting Digital Bank support. Your inquiry requires specialist review. Our customer support team has received your request and a specialist will respond shortly."
+              "value": "=Thank you for contacting Digital Bank. We searched our official policy documents but could not find a clear, confirmed answer to your specific question. Rather than guess, we're routing this to a specialist who will review your question and send you an accurate, verified answer shortly."
             },
             {
               "id": "citations",
@@ -450,6 +439,18 @@
               "name": "threshold_exceeded",
               "type": "boolean",
               "value": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded }}"
+            },
+            {
+              "id": "rag_returning",
+              "name": "isReturning",
+              "type": "boolean",
+              "value": "={{ $('Extract Case ID').item.json.isReturning }}"
+            },
+            {
+              "id": "rag_inquirer_type",
+              "name": "inquirer_type",
+              "type": "string",
+              "value": "={{ $('Extract Case ID').item.json.inquirer_type }}"
             }
           ]
         },
@@ -462,6 +463,70 @@
       "position": [
         2048,
         112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "support_cases",
+        "limit": 2,
+        "filterType": "string",
+        "filterString": "=customer_email=eq.{{ $('Validate Support Request Payload').item.json.params.customer_email }}&created_at=gte.{{ new Date(Date.now() - 10*60*1000).toISOString() }}&order=created_at.desc"
+      },
+      "id": "d3921dc3-7325-411d-9ab3-a2702e716b76",
+      "name": "Check Returning Inquirer",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        416,
+        368
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "err-fallback-draft",
+              "name": "groq_draft",
+              "type": "string",
+              "value": "=Thank you for contacting Digital Bank. We were unable to find a confirmed answer to your question in our policy documents. A specialist will review your question and send you an accurate, verified answer shortly."
+            },
+            {
+              "id": "err-citations",
+              "name": "citations",
+              "type": "array",
+              "value": "=[]"
+            },
+            {
+              "id": "err-confidence",
+              "name": "confidence_score",
+              "type": "number",
+              "value": 0
+            },
+            {
+              "id": "err-threshold",
+              "name": "threshold_exceeded",
+              "type": "boolean",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f58ded8b-6eda-47b5-a66f-47a64536597f",
+      "name": "Agent Error Fallback",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1440,
+        320
       ]
     }
   ],
@@ -503,7 +568,7 @@
       "main": [
         [
           {
-            "node": "Extract Case ID",
+            "node": "Check Returning Inquirer",
             "type": "main",
             "index": 0
           }
@@ -573,6 +638,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Agent Error Fallback",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -637,6 +709,28 @@
           }
         ]
       ]
+    },
+    "Check Returning Inquirer": {
+      "main": [
+        [
+          {
+            "node": "Extract Case ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent Error Fallback": {
+      "main": [
+        [
+          {
+            "node": "Save Support Case Draft in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -644,7 +738,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "209e9875-c7e8-4dd2-91d7-13f108602455",
+  "versionId": "8fabfced-eae8-47a1-ac2f-95baf0937186",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

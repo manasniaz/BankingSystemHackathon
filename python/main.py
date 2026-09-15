@@ -43,8 +43,8 @@ app = FastAPI(
 
 class AssessFraudRequest(BaseModel):
     account_id: str = Field(..., description="UUID of the source account")
-    amount: int = Field(..., gt=0, description="Transaction amount in cents")
-    currency: str = Field(default="USD", description="ISO currency code")
+    amount: int = Field(..., gt=0, description="Transaction amount in paisa (1 PKR = 100 paisa)")
+    currency: str = Field(default="PKR", description="ISO currency code")
     profile_id: Optional[str] = Field(default=None, description="UUID of initiating profile or null")
     transaction_context: Dict[str, Any] = Field(default_factory=dict, description="Additional context dictionary")
 
@@ -74,7 +74,7 @@ def assess_fraud(payload: AssessFraudRequest):
     Rules evaluated:
     1. Account status rule: Reject immediately if account is frozen or closed.
     2. Velocity rule: > 5 transactions from this account in the last 60 minutes -> High risk (+50 points).
-    3. Large amount rule: amount > 500,000 cents ($5,000) -> Elevated risk (+30 points).
+    3. Large amount rule: amount > 50,000,000 paisa (Rs 500,000) -> Elevated risk (+30 points).
     4. New recipient rule: destination account has never received money from this account before -> Minor risk (+15 points).
     
     Score >= 75.0 -> Not approved.
@@ -165,12 +165,12 @@ def assess_fraud(payload: AssessFraudRequest):
         logger.error(f"Error checking transaction velocity for account_id {account_id}: {e}")
 
     # -------------------------------------------------------------------------
-    # RULE 3: Large Amount Rule (amount > 500,000 cents / $5,000)
+    # RULE 3: Large Amount Rule (amount > 50,000,000 paisa / Rs 500,000)
     # -------------------------------------------------------------------------
     large_amount_risk = False
-    if amount > 500_000:
+    if amount > 50_000_000:
         large_amount_risk = True
-        flags.append(f"Large amount (${amount / 100:,.2f} exceeds $5,000.00 threshold)")
+        flags.append(f"Large amount (Rs {amount / 100:,.2f} exceeds Rs 500,000.00 threshold)")
 
     # -------------------------------------------------------------------------
     # RULE 4: New Recipient Rule

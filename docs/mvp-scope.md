@@ -2,6 +2,8 @@
 
 What this submission includes, what it deliberately leaves out, and why. This is the short version — the item-by-item reasoning for every edge case in the capstone PDF lives in [`decisions.md`](decisions.md).
 
+> **Update (2026-09-15):** Several items below (minor/guardian accounts, either-or vs. both-signature authority, majority-vote governance, holder addition with active holds, real account opening) were moved from "out of scope" into "built" in a follow-up pass. See `decisions.md`'s **Session 2 Addendum** for the full detail — this page hasn't been fully rewritten to match, so where the two disagree, `decisions.md` is authoritative.
+
 ## In scope (built and live)
 
 - Single-holder and joint account creation, unanimous-consent joint account **closure** only (not holder removal, not other joint actions).

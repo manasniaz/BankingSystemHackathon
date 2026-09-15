@@ -1,0 +1,158 @@
+{
+  "name": "WF-09 Seed Policy Documents",
+  "nodes": [
+    {
+      "id": "d743883e-9112-4f30-bf15-5491fd134d87",
+      "name": "Manual Seed Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "6648ad16-50ae-456a-aeb6-547dfd6a22e6",
+      "name": "Policy Documents",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const docs = [\n  { doc_id: 'doc_wire_transfer_policy', text: 'Wire Transfer Policy: International wire transfers have a daily limit of Rs 500,000 per account for verified customers, with a flat fee of Rs 1,500 per outgoing international wire. Domestic wire transfers within Pakistan have no fee and are processed the same business day if submitted before 3:00 PM PKT.' },\n  { doc_id: 'doc_overdraft_policy', text: 'Overdraft Policy: Digital Bank does not offer overdraft facilities on checking or savings accounts. Every transfer is validated against available balance before execution; a transaction that would take the balance below zero is automatically rejected, never allowed to create a negative balance.' },\n  { doc_id: 'doc_atm_fees', text: 'ATM Fee Policy: ATM withdrawals at Digital Bank-branded ATMs are free of charge. Withdrawals at partner network ATMs within Pakistan incur a Rs 25 fee per transaction. Withdrawals at non-partner ATMs incur a Rs 50 fee per transaction.' },\n  { doc_id: 'doc_account_opening_policy', text: 'Account Opening Policy: Digital Bank offers checking and savings accounts in PKR (Pakistani Rupees), opened by email request. No minimum opening deposit is required; new accounts start at a balance of Rs 0.00. This is a simplified account-opening process without formal KYC document verification.' },\n  { doc_id: 'doc_joint_account_policy', text: 'Joint Account Policy: A joint account is opened by inviting another person by email. The invited person has exactly 5 minutes to accept or decline before the invitation expires. By default either holder may transfer funds unilaterally (either-or authority); an account can instead be configured so that every holder must approve a transfer before it executes (both-signatures authority). Closing a joint account requires consent from all named holders.' },\n  { doc_id: 'doc_dispute_fraud_policy', text: 'Dispute and Fraud Policy: If a transaction was unauthorized or fraudulent, reply to our email immediately with the transaction date, amount, and recipient. Our fraud team places an immediate hold on suspicious activity pending investigation. Disputes are typically reviewed within 3-5 business days.' },\n  { doc_id: 'doc_standing_orders_policy', text: 'Standing Order Policy: Recurring standing order payments are checked hourly and executed automatically once due. If a scheduled payment falls on a weekend, it is processed on the next business day by default. If a payment fails due to insufficient funds, it is retried on subsequent runs up to 3 times before being marked permanently failed and the customer notified.' },\n  { doc_id: 'doc_reconciliation_policy', text: 'Reconciliation Policy: Digital Bank reconciles its full ledger every night at midnight UTC, verifying that system-wide debits equal credits and that every account balance matches its recorded double-entry transaction history.' },\n  { doc_id: 'doc_account_closure_policy', text: 'Account Closure Policy: An account can only be closed once its balance is exactly Rs 0.00 and it has no active holds or standing orders. Joint accounts require every holder to consent before closure is finalized.' },\n  { doc_id: 'doc_support_hours_policy', text: 'Support Policy: Digital Bank email support is available 24/7. Policy questions are answered by an AI assistant grounded strictly in official policy documents; a human specialist reviews and approves any account-specific or ambiguous request before a final response is ever sent to a customer.' },\n  { doc_id: 'doc_fraud_scoring_policy', text: 'Fraud Scoring Policy: Every transfer is automatically scored for fraud risk before execution. Risk factors include high transaction velocity (more than 5 transfers in 60 minutes), large transfer amounts (over Rs 500,000), and first-time transfers to a new recipient. Transactions scoring 75 or higher are blocked and the account is placed under a security hold pending human review.' }\n];\nreturn docs.map(d => ({ json: { text: d.text, metadata: { doc_id: d.doc_id } } }));"
+      }
+    },
+    {
+      "id": "65eb6edc-59d1-4331-bc83-f25c87c1c4f5",
+      "name": "Seed Policy Knowledge Base",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.3,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "mode": "insert",
+        "pineconeIndex": {
+          "__rl": true,
+          "mode": "id",
+          "value": "banking-policy-index"
+        },
+        "options": {
+          "pineconeNamespace": "banking_policy"
+        },
+        "embeddingBatchSize": 200
+      },
+      "credentials": {
+        "pineconeApi": {
+          "id": "5T49ZfPpkS1OzAm0",
+          "name": "Pinecone account"
+        }
+      }
+    },
+    {
+      "id": "e6d99f59-4e94-4290-9f6d-e6ef6d905e14",
+      "name": "Gemini Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        900,
+        500
+      ],
+      "parameters": {
+        "modelName": "models/gemini-embedding-001"
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "XUIXSrkzGKEEyyXp",
+          "name": "Google Gemini API"
+        }
+      }
+    },
+    {
+      "id": "18ae2c72-87e0-4507-ac1a-4e17b738db54",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        500
+      ],
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.text }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "doc_id",
+                "value": "={{ $json.metadata.doc_id }}"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Policy Documents": {
+      "main": [
+        [
+          {
+            "node": "Seed Policy Knowledge Base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Seed Policy Knowledge Base",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Seed Policy Knowledge Base",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Seed Trigger": {
+      "main": [
+        [
+          {
+            "node": "Policy Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "a9635eb5-80a0-4043-bf25-411e5b8b8876",
+  "meta": {
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
+  },
+  "id": "7kXylLFjZDlrhdKw",
+  "tags": []
+}

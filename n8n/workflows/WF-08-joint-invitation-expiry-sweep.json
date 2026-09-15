@@ -1,0 +1,187 @@
+{
+  "name": "WF-08 Joint Invitation Expiry Sweep",
+  "nodes": [
+    {
+      "id": "a3d3bf9f-c65e-4714-9495-194b28453ac3",
+      "name": "Schedule - Every Minute Invitation Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -800,
+        112
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ea0f3dd7-5715-4883-9be8-f376621a2df8",
+      "name": "Execute Supabase RPC expire_stale_joint_invitations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -600,
+        112
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/expire_stale_joint_invitations",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "c03765e9-cb09-4fe6-8281-982e170b663f",
+      "name": "Extract Expired Invitations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        112
+      ],
+      "parameters": {
+        "jsCode": "const body = $input.first().json;\nconst list = Array.isArray(body.expired) ? body.expired : [];\nreturn list.map(e => ({ json: e }));"
+      }
+    },
+    {
+      "id": "ecbf7512-462f-4add-a777-a1d54d1c5958",
+      "name": "Email Inviter - Invitation Expired",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        40
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.inviter_email }}",
+        "subject": "Joint Account Invitation Expired",
+        "emailType": "text",
+        "message": "=Hello {{ $json.inviter_name }},\n\nYour joint account invitation to {{ $json.invitee_email }} has expired because they did not respond within 5 minutes.\n\nYou can send a new invitation any time by emailing us again.\n\nDigital Bank New Accounts Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "218a7295-a259-461c-876d-7754506ea11c",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "9584a3f0-8510-417d-ac81-f7cda489ad46",
+      "name": "Process Each Expired Invitation",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -200,
+        112
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    }
+  ],
+  "connections": {
+    "Schedule - Every Minute Invitation Check": {
+      "main": [
+        [
+          {
+            "node": "Execute Supabase RPC expire_stale_joint_invitations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Supabase RPC expire_stale_joint_invitations": {
+      "main": [
+        [
+          {
+            "node": "Extract Expired Invitations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Expired Invitations": {
+      "main": [
+        [
+          {
+            "node": "Process Each Expired Invitation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Inviter - Invitation Expired": {
+      "main": [
+        [
+          {
+            "node": "Process Each Expired Invitation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Each Expired Invitation": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Email Inviter - Invitation Expired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9cee23f4-3846-4efd-8db6-e738b2046de4",
+  "meta": {
+    "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
+  },
+  "id": "x5dCx7nM6uHqWvbX",
+  "tags": []
+}
