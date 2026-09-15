@@ -1356,6 +1356,7 @@
         "filterType": "string",
         "filterString": "=invitee_email=eq.{{ $('Extract Email Metadata').item.json.fromEmail }}&status=eq.pending&order=created_at.desc"
       },
+      "alwaysOutputData": true,
       "credentials": {
         "supabaseApi": {
           "id": "tJhpbtV5Vin0bmon",

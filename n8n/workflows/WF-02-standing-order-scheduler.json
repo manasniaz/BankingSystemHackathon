@@ -26,7 +26,7 @@
         "tableId": "standing_orders",
         "returnAll": true,
         "filterType": "string",
-        "filterString": "=status=eq.active&next_execution_at=lte.{{ $now.toISO() }}&select=id,source_account_id,destination_account_id,amount,currency,frequency,next_execution_at,retry_count,last_error,status"
+        "filterString": "=status=eq.active&next_execution_at=lte.{{ $now.toUTC().toISO() }}&select=id,source_account_id,destination_account_id,amount,currency,frequency,next_execution_at,retry_count,last_error,status"
       },
       "id": "3054bbed-b410-474c-97c6-4a1eee33df1c",
       "name": "Fetch Due Standing Orders",
