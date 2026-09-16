@@ -208,6 +208,25 @@ The cut markers were anchored to line starts. Proton Mail on Android sends the w
 
 An address in the message body may name a recipient. It still never establishes who is asking — identity remains the envelope sender, always.
 
-### An unauthenticated surface worth removing
+### WF-05 unpublished: an unauthenticated loan-approval endpoint
 
-Five workflows expose public webhooks (`/webhook/transfer`, `/assess-fraud`, `/support-case`, `/approve-draft`, `/approve-loan`) wired straight to live logic. All five are **inert**: each declares `responseMode: responseNode` with no Respond to Webhook node present, so n8n errors at the trigger before any downstream node runs. Not exploitable, but one missing node away from approving loans without authentication in a bank whose only channel is email. Removing them (and retiring WF-05, reachable only through two of them and superseded by the `OPS-` email flow) is left as a decision.
+Five workflows expose public webhooks wired straight to live logic, none with authentication:
+
+| Workflow | Path | State |
+|---|---|---|
+| WF-01 | `/webhook/transfer` | inert — no Respond to Webhook node, errors at the trigger |
+| WF-03 | `/webhook/assess-fraud` | inert — same |
+| WF-04 | `/webhook/support-case` | inert — same |
+| **WF-05** | `/webhook/approve-draft`, `/webhook/approve-loan` | **was live** |
+
+WF-05 has eight Respond to Webhook nodes, so unlike the others its endpoints ran. `POST /webhook/approve-loan` parsed a request and replied; with a real loan id and `action: approve` it would have approved the loan, disbursed the funds and emailed the customer — for anyone who knew the URL.
+
+**WF-05 is unpublished.** Both paths now return 404. Nothing references it, and its entire job was already being done by the `OPS-` reference-code flow in WF-00:
+
+| WF-05 did | WF-00 does |
+|---|---|
+| Approve/reject a support draft, email the customer | `Resolve Ops Approval` → `Route Ops Decision Outcome` → `Send Reviewed Policy Answer to Customer` / `Send Policy Answer Rejected Email` |
+| Approve/reject a loan, email the customer | same route → `Send Loan Approved Email (Ops Decision)` / `Send Loan Rejected Email (Ops Decision)`, plus `operator_decide_loan()` |
+| Update draft/case state, write audit rows | done inside `resolve_ops_approval()` in SQL |
+
+It was superseded when ops moved to email, and was simply left running. Deleting it, and removing the three inert webhook triggers, is still worth doing.

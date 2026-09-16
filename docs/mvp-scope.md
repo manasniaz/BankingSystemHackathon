@@ -11,7 +11,7 @@ What this submission includes, what it deliberately leaves out, and why. This is
 - Deterministic Python fraud scoring (4 rules) gating every transfer, with automated full-account-freeze on high risk.
 - Standing orders: hourly execution, retry-with-max-3, permanent-failure alerting, stale-lock-safe against concurrent edits.
 - Nightly ledger reconciliation (debit=credit system-wide, cached balance vs. ledger sum per account).
-- RAG-drafted policy support answers: a grounded, confident (≥0.7) answer is sent straight to the customer; anything else degrades to a mandatory human approval gate (WF-05) instead of guessing. Human review is for what's actually ambiguous, not every request. See `decisions.md` Session 5 and `docs/policies.md`.
+- RAG-drafted policy support answers: a grounded, confident (≥0.7) answer is sent straight to the customer; anything else degrades to a mandatory human approval gate instead of guessing. Human review is for what's actually ambiguous, not every request. That gate is the `OPS-` reference-code email round trip in WF-00 — an operator replies `APPROVE` or `REJECT` from the operations mailbox. (It was originally WF-05, an HTTP approval workflow, which has been retired.) See `decisions.md` Sessions 5, 9 and 12, and `docs/policies.md`.
 - Gmail as the sole customer-facing channel, both inbound (intent classification from real emails) and outbound (every response path).
 - 24-table Postgres ledger of truth, 59 `SECURITY DEFINER` RPCs as the only financial mutation path, RLS on every table.
 - **Email-driven human approval**: a dedicated ops mailbox receives every decision that needs a person — a loan over Rs 200,000, a policy answer the RAG agent couldn't ground, a fraud freeze — and the operator decides it by replying APPROVE or REJECT to that email. See `decisions.md` Session 9.
@@ -42,7 +42,7 @@ Tracked in `decisions.md` → "Known live issues": the Railway Python service UR
 
 The Railway one stayed open far longer than it should have because it was not *checkable*: `/health` returned `{"status": "ok"}` whether or not the service could reach the database, so the only symptom of a misconfigured deployment was every transfer being blocked — which looks exactly like fraud detection working. `/health` now reports credential presence and a live database round-trip, so the question "is the deployment configured?" has an answer that does not involve moving money.
 
-**Still open (Session 12):** five workflows expose unauthenticated public webhooks wired to live logic. They are inert — each declares `responseMode: responseNode` with no such node present, so n8n errors at the trigger before anything downstream runs — but they should be removed rather than left one missing node away from approving loans without authentication. See `decisions.md` → Session 12.
+**Found and closed in Session 12:** `POST /webhook/approve-loan` on WF-05 was a live, unauthenticated endpoint that could approve a loan and disburse funds to anyone who knew the URL. WF-05 is now unpublished; it was superseded by the `OPS-` email flow in WF-00 and nothing referenced it. The equivalent webhooks on WF-01, WF-03 and WF-04 are inert — they declare `responseMode: responseNode` with no such node present, so n8n errors at the trigger — but they should still be deleted. See `decisions.md` → Session 12.
 
 ## Genuinely still not built
 

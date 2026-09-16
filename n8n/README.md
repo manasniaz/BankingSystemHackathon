@@ -18,8 +18,8 @@ The `n8n/` layer is the automated control plane for the Digital Banking System. 
 | [`WF-01-transfer.json`](workflows/WF-01-transfer.json) | WF-01 Transfer | Sub-Workflow / Webhook (`POST /webhook/transfer`) | Validates transfer parameters and idempotency key, calls `initiate_transfer`/`execute_transfer` RPC (either-or or both-signature authority, depending on the account), returns a structured result. |
 | [`WF-02-standing-order-scheduler.json`](workflows/WF-02-standing-order-scheduler.json) | WF-02 Standing Orders | Schedule Trigger (hourly) | Scans due standing orders (`next_execution_at <= NOW()`), calls `execute_standing_order` RPC, handles retries, triggers permanent failure alerts to Ops. |
 | [`WF-03-fraud-hold.json`](workflows/WF-03-fraud-hold.json) | WF-03 Fraud Hold | Sub-Workflow / Webhook (`POST /webhook/assess-fraud`) | Invokes the Python fraud microservice (`POST /assess-fraud`). If risk ≥ 75 or `approved=false`, calls `place_account_hold` RPC to freeze the account and sends an Ops alert. |
-| [`WF-04-rag-support-case.json`](workflows/WF-04-rag-support-case.json) | WF-04 RAG Support | Sub-Workflow / Webhook (`POST /webhook/support-case`) | Open to anyone, not just customers. Creates a `support_cases` row, runs the LangChain agent (Groq + Pinecone + Gemini) grounded in [`../docs/policies.md`](../docs/policies.md). A grounded, confident (≥0.7) answer is **sent directly** — no human step. Anything else is saved to `support_case_drafts` for WF-05 human review. |
-| [`WF-05-human-approval-gmail.json`](workflows/WF-05-human-approval-gmail.json) | WF-05 Human Approval | Webhook (`POST /webhook/approve-draft`) | Handles only the cases WF-04 couldn't confidently answer. Operator approves/edits/rejects the draft, updates DB state, sends the Gmail response if approved, logs an audit event. |
+| [`WF-04-rag-support-case.json`](workflows/WF-04-rag-support-case.json) | WF-04 RAG Support | Sub-Workflow / Webhook (`POST /webhook/support-case`) | Open to anyone, not just customers. Creates a `support_cases` row, runs the LangChain agent (Groq + Pinecone + Gemini) grounded in [`../docs/policies.md`](../docs/policies.md). A grounded, confident (≥0.7) answer is **sent directly** — no human step. Anything else is saved to `support_case_drafts` and raises an `OPS-` approval that WF-00 emails to the operations mailbox. |
+| [`WF-05-human-approval-gmail.json`](workflows/WF-05-human-approval-gmail.json) | WF-05 Human Approval | Webhook - **retired, keep deactivated** | The original HTTP approval gate: an operator POSTed approve/reject for a support draft or a loan. Superseded when approvals moved to email; the `OPS-` reference-code flow in WF-00 does all of it, and `resolve_ops_approval()` writes the state changes and audit rows in SQL. Unpublished in Session 12 because `POST /webhook/approve-loan` was a **live, unauthenticated** endpoint that could approve a loan and disburse funds to anyone who knew the URL. Kept in the repo as history; do not reactivate. |
 | [`WF-06-reconciliation.json`](workflows/WF-06-reconciliation.json) | WF-06 Reconciliation | Schedule Trigger (midnight UTC) | Daily ledger verification: calls `run_reconciliation` RPC (system-wide debits=credits, cached balances vs. ledger), alerts Ops on mismatch. Also runs `promote_minors_to_adult()` on the same schedule. |
 | [`WF-08-joint-invitation-expiry-sweep.json`](workflows/WF-08-joint-invitation-expiry-sweep.json) | WF-08 Joint Invitation Expiry Sweep | Schedule (every minute) — **kept deactivated** | Fired unconditionally every minute regardless of need, which burns n8n Cloud's free-tier execution quota fast. Deactivated; the identical logic now runs opportunistically inside WF-00 (triggered by real mail only) at zero standing cost. Left here, deactivated, only for optional temporary reactivation during a live demo. |
 | [`WF-09-seed-policy-documents.json`](workflows/WF-09-seed-policy-documents.json) | WF-09 Seed Policy Documents | Manual/one-time utility | Embeds the 13 policy documents in [`../docs/policies.md`](../docs/policies.md) into Pinecone. Insert-only (no id mapping) — see the update procedure documented there before re-running it against an already-seeded index. |
@@ -53,8 +53,8 @@ The `n8n/` layer is the automated control plane for the Digital Banking System. 
      │          │       ┌───┴───┐     on a Gmail reply)
      │          │       ▼       ▼
      │          │    Send    Queue for
-     │          │   directly WF-05 human
-     │          │   (no human) approval
+     │          │   directly  OPS- email
+     │          │   (no human) to ops   
      ▼          ▼       │        │
   Gmail      Gmail      ▼        ▼
  Response   Response  Gmail   Operator approves →
@@ -69,7 +69,7 @@ Configure the following credentials in **n8n → Credentials**:
 
 | Credential Name in n8n | Credential Type | Workflows Using It | Description |
 |---|---|---|---|
-| `Gmail account` | `gmailOAuth2` | WF-00, WF-01, WF-02, WF-03, WF-04, WF-05, WF-06 | Connected to the bank's own Gmail account. WF-04 sends grounded answers directly, so it needs this credential too, not just WF-05. |
+| `Gmail account` | `gmailOAuth2` | WF-00, WF-01, WF-02, WF-03, WF-04, WF-05, WF-06 | Connected to the bank's own Gmail account. WF-05 is retired and no longer runs. |
 | `Supabase account` | `supabaseApi` | WF-00, WF-01, WF-02, WF-03, WF-04, WF-05, WF-06, WF-08 | Supabase URL & Service Role Key / REST API key. |
 | `Groq account` | `groqApi` | WF-04 | Groq API Key (LLM used for grounded drafting). |
 | `Pinecone account` | `pineconeApi` | WF-04, WF-09 | Pinecone API Key (index: `banking-policy-index`, namespace: `banking_policy`, 3072 dimensions). |
@@ -111,7 +111,7 @@ Do not point the ops address at the bank inbox itself. WF-00 would then read the
    - `WF-02-standing-order-scheduler.json`
    - `WF-03-fraud-hold.json`
    - `WF-04-rag-support-case.json`
-   - `WF-05-human-approval-gmail.json`
+   - `WF-05-human-approval-gmail.json` (retired - import for history only, never activate)
    - `WF-06-reconciliation.json`
    - `WF-08-joint-invitation-expiry-sweep.json` (import it, but leave it **deactivated** — see its row above)
    - `WF-09-seed-policy-documents.json`
@@ -130,7 +130,6 @@ Do not point the ops address at the bank inbox itself. WF-00 would then read the
    - `WF-03 Fraud Hold` (sub-workflow)
    - `WF-01 Transfer` (sub-workflow)
    - `WF-04 RAG Support` (sub-workflow)
-   - `WF-05 Human Approval` (approval gate)
    - `WF-00 Gmail Front Door` (main intake trigger)
    - Leave `WF-08` **deactivated** (see its row above for why)
 
@@ -197,7 +196,7 @@ The database identifies customers by their registered email in the `profiles` ta
     "action": "approve"
   }
   ```
-- **Expected Result**: `WF-05` updates draft state to `approved` and case status to `resolved`, sends the final reply via Gmail, logs audit event `support_case_resolved`.
+- **Expected Result**: `resolve_ops_approval()` updates draft state to `approved` and case status to `resolved`, WF-00 sends the final reply via Gmail, and an audit event `support_case_resolved` is logged.
 
 #### TEST 6: Unauthorized Access Attempt (Privacy Protection)
 - **From**: Alice's Gmail

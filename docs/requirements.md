@@ -10,7 +10,7 @@
 | Fraud | Every transfer request is scored by a deterministic rules engine before funds move; a service outage fails safe (hold), never fails open (approve). | `python/main.py`, WF-03 `Validate & Evaluate Fraud Decision` |
 | Standing orders | Recurring transfers execute on a business-day-aware schedule, retry on transient failure up to a bounded count, and notify both ops **and the customer** on permanent failure. | `execute_standing_order()`, WF-02 |
 | Reconciliation | The ledger is checked nightly for internal consistency (debits=credits, balances=ledger sums), with an alert on any discrepancy. | `run_reconciliation()`, WF-06 |
-| Support | Policy questions get a RAG-grounded draft. A grounded, confident (≥0.7) answer is sent to the customer automatically; anything the model isn't confidently grounded on requires explicit human approval before it reaches a customer. | WF-04, WF-05 |
+| Support | Policy questions get a RAG-grounded draft. A grounded, confident (≥0.7) answer is sent to the customer automatically; anything the model isn't confidently grounded on requires explicit human approval before it reaches a customer. | WF-04, WF-00 (`OPS-` approval) |
 | Auditability | Every financial mutation and every fraud/support decision writes an immutable audit record. | `audit_log` (append-only via trigger), `write_audit_log()` |
 
 ## Non-functional
