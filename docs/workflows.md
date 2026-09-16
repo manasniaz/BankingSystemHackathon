@@ -246,3 +246,29 @@ Three were introduced in this session. The fourth, `Alert Ops - Dispute Raised`,
 **Joining the team by pass phrase.** `PASSPHRASE: <phrase>` from an address that holds no accounts enrols it; `NEW PASSPHRASE: <phrase>` from an existing operator rotates it. The security reasoning is in `database.md` under migration 028. The two forms are deliberately distinct words rather than the same syntax meaning different things depending on who sent it.
 
 Adding the third rule to `Route Ops Command` moved its fallback from output 2 to output 3. Rule and rewiring went in one atomic update, as they now always do.
+
+### Session 12, third pass: what only real email could find
+
+Five defects, every one of them invisible to the database tests and to the static audit, and every one found by an actual message arriving.
+
+**A missing subject line read as a rejection.** n8n substitutes the literal string `"No Subject"` when an email has none. That string went into the APPROVE/REJECT detector, where **"No"** matches the rejection pattern — so an email saying only `APPROVE OPS-97EBF6C8` contained an approval *and* a rejection, was correctly judged ambiguous, and left the request pending. Every decision type was affected: loans, disputes, joint consents, guardian consents, staff enrolment. A placeholder is not something the sender typed, so it no longer gets a vote.
+
+This one is worth dwelling on. The "never guess at an unclear answer" rule is right, and it worked exactly as designed — it just happened to be fed a word the customer never wrote.
+
+**A date of birth was read out of a quote header.** `Extract New Sender Intent` parsed the whole message body, quoted text included. Someone replying with only the missing detail — their guardian's address — had their DOB taken from Gmail's `On Wed, Sep 16, 2026 at 1:28 PM ... wrote:` line, producing a date of birth of *today*. Date of birth is the field that decides whether an applicant needs a guardian at all.
+
+Quote-stripping had been added to the intent classifier, to `Detect Reference Reply` and to `Parse Ops Command` — and missed here. The fix reads only what the sender typed, and falls back to the quoted thread solely for a date explicitly **labelled** as a date of birth, never a loose one, because a loose date in quoted text is far more likely to be a timestamp than a birthday.
+
+**A hardening check took every approval down.** Covered in `database.md` under migration 030: `resolve_ops_approval` runs as `banking_functions`, the `is_bank_staff` helper it calls was granted only to `service_role`, and the result was `permission denied` on every ops decision in the bank. The check itself was correct; the owner it would run as was not considered.
+
+**Every operations reply went to the team inbox rather than to the operator who sent the command.** Invisible while the team was one address. The moment there were two, the wrong person was told and the sender heard nothing.
+
+**An operator was refused a credit and the administrator was never told.** A refused attempt to create money out of the treasury is exactly what the person holding that power should see. The administrator now gets it, with the two commands to respond — issue it themselves, or remove the operator.
+
+**And a queue that could become invisible.** If an alert email is lost, filed as spam or deleted, the request sits in the queue until it expires seven days later with nobody having decided it. `list pending approvals` means an operator can ask instead of depending on a message having arrived. Migration 031.
+
+**A near-miss worth recording.** A shell heredoc silently turned the `\b` word boundaries in a new regex into literal backspace characters (`0x08`), which would have made the command never match. Caught before deploying by reading back what was actually written rather than what was intended. All workflow files are now scanned for stray control characters.
+
+**Verified by real email this session:** transfer by account number and by email address, recipient notification, deposit, statement, balance, loan application, loan approval through an `OPS-` code (with no subject line), loan cancellation, administrator credit, operator credit refused, operator enrolment by pass phrase, administrator approval of it, operator removal, a removed operator having no powers, the joining phrase misused by an existing operator, dispute raised and upheld, joint account invitation and acceptance, additional account opening, minor account with guardian consent, unauthorised access refused, and an ops command the bank would not guess at. `run_reconciliation()` clean throughout, debits equal to credits, no account ever negative.
+
+**Still not verified by email:** account opening for a brand-new **adult**. Every address available holds an account or is staff, and Gmail plus-addressing cannot be used as a sending address, so there was no way to present the bank with an unknown adult. The minor path exercises the same node and the same routing, and `open_account_with_details()` is verified by RPC — but the adult branch of `New Sender Route` has not had a real email through it, and should not be described as though it has.
