@@ -111,5 +111,15 @@ If an answer you receive contradicts these documents, these documents are correc
 | Support hours for human review | Monday to Friday, 9:00 AM – 6:00 PM PKT |
 | Automated banking | 24/7, including weekends and holidays |
 | Reference code expiry | 7 days for approvals; 5 minutes for a joint account invitation |
+| Questions per email | Up to two. More than that and we reply asking you to split them |
+
+
+**Why we answer two questions at a time.** An email asking six separate things
+gets a worse answer to every one of them than two emails asking three would. We
+search our policy documents afresh for each topic, and a single reply stretched
+across many unrelated subjects is where partial and vague answers come from. So
+if you send more than two questions at once, we reply straight away listing what
+you asked and inviting you to send the first one or two. There is no limit on how
+many emails you send, and no delay in answering them.
 
 You do not need to be a Digital Bank customer to ask a policy question. Anyone can email and ask about fees, limits or how something works. Account-specific information is only ever given to the registered holder.

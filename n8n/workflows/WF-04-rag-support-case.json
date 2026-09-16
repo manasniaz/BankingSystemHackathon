@@ -91,7 +91,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const params = $('Validate Support Request Payload').item.json.params;\nconst caseInsertResult = $('Create Support Case in Supabase').item.json;\nconst caseId = caseInsertResult.id;\nconst recentCases = $input.all();\nconst isReturning = Array.isArray(recentCases) && recentCases.length > 1;\n\nreturn [{\n  json: {\n    case_id: caseId,\n    profile_id: params.profile_id,\n    subject: params.subject,\n    inquiry: params.inquiry,\n    customer_email: params.customer_email,\n    inquirer_type: params.inquirer_type,\n    isReturning\n  }\n}];"
+        "jsCode": "const params = $('Validate Support Request Payload').first().json.params;\nconst caseInsertResult = $('Create Support Case in Supabase').item.json;\nconst caseId = caseInsertResult.id;\nconst recentCases = $input.all();\nconst isReturning = Array.isArray(recentCases) && recentCases.length > 1;\n\n// How many separate questions did they actually ask?\n//\n// A six-part email cost three searches and four LLM calls and still failed on\n// the provider's rate limit every time, because the final call has to carry the\n// whole conversation plus six answers. Rather than half-answer it -- which is\n// what it did before, silently dropping four of six -- we answer up to two and\n// ask for the rest in a follow-up. That is how a real support desk behaves too:\n// a complete answer to two questions beats a partial answer to six.\n//\n// Numbered lines are the reliable signal; question marks are the fallback for\n// someone who writes in prose.\nfunction countNumbered(text) {\n  const found = new Set();\n  const re = /(?:^|\\n)[ \\t>]*(\\d{1,2})[.)][ \\t]+\\S/g;\n  let m;\n  while ((m = re.exec(text)) !== null) found.add(parseInt(m[1], 10));\n  return found.size;\n}\nconst inquiryText = String(params.inquiry || '');\nconst questionMarks = (inquiryText.match(/\\?/g) || []).length;\nconst questionCount = Math.max(countNumbered(inquiryText), questionMarks);\n\n// Echo their questions back so they do not have to retype them.\nconst questionList = inquiryText\n  .split('\\n')\n  .map(function (l) { return l.trim(); })\n  .filter(function (l) { return /^\\d{1,2}[.)]\\s+\\S/.test(l) || /\\?\\s*$/.test(l); })\n  .slice(0, 12)\n  .join('\\n');\n\nreturn [{\n  json: {\n    case_id: caseId,\n    profile_id: params.profile_id,\n    subject: params.subject,\n    inquiry: params.inquiry,\n    customer_email: params.customer_email,\n    inquirer_type: params.inquirer_type,\n    isReturning,\n    questionCount,\n    questionList\n  }\n}];"
       },
       "id": "b3e44677-6654-499f-bb75-2a2fb9b585a6",
       "name": "Extract Case ID",
@@ -105,10 +105,10 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ ($('Extract Case ID').item.json.isReturning ? 'Note: this person has contacted us within the last 10 minutes -- treat them as a returning visitor in tone, but still answer strictly from retrieved policy documents.\\n\\n' : '') + $json.inquiry }}",
+        "text": "={{ ($('Extract Case ID').first().json.isReturning ? 'Note: this person has contacted us within the last 10 minutes -- treat them as a returning visitor in tone, but still answer strictly from retrieved policy documents.\\n\\n' : '') + $json.inquiry }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) Call the Policy Knowledge Base tool AT MOST TWICE total, with two different phrasings that between them cover every topic the customer raised -- group related topics into each search rather than splitting them. Do not call it a third time under any circumstances.\n(4) If a search returns nothing relevant for one topic, stop searching for THAT topic and move to the next one. Only if NO search returns anything relevant at all, answer with GROUNDED: false, CONFIDENCE: 0, CITATIONS: NONE, NEEDS_HUMAN: true, and a DRAFT saying our policy documents do not cover this yet.\n\nANSWER EVERY PART YOU CAN:\nA question often has several parts, and our documents may cover some of them and not others. That is normal and it is NOT a failure. Answer the parts our documents do cover, quoting the figures exactly as published, and then say plainly that the remaining parts are not addressed in our published policy. Never withhold a figure we do publish because some other part of the question is unpublished. If you are asked where a figure is published, name the policy document and the section heading it appears under in the retrieved text.\n\nCOVER EVERY QUESTION THEY ASKED:\nIf the customer numbered their questions, your DRAFT must answer EVERY number, in their order, reusing their numbering. Six questions asked means six numbered answers. Never stop part way, and never write a blanket sentence such as \"the policy does not cover any additional information beyond the above\" -- that hides which question went unanswered. If one specific item is not covered, say so against that item's own number, and answer the rest normally. Before you give your final answer, re-read the customer's email and check that every question they asked has an answer in your draft.\n\nTHIS BANK RUNS ENTIRELY BY EMAIL:\nThere is no app, no website, no online banking login, no branch and no phone line. Never tell a customer to use an app, log in, visit a branch, or call us, and never invent a support address or phone number. The only way for a customer to do anything is to reply to our email. Say \"reply to this email\" when you need them to act.\nDo not speculate about what other banks or intermediaries charge or do. If our documents do not address it, say only that our published policy does not address it.\n\nWRITING THE DRAFT:\nThe draft is sent as a plain-text email. Do NOT use Markdown: no asterisks for bold, no underscores, no backticks, no headings, no tables, no bullet characters. Write figures inline in ordinary sentences, for example: the fee is Rs 1,500 per outgoing wire. Never put an internal document ID such as doc_payments_and_transfers in the DRAFT -- name the policy in plain words instead, for example \"our Payments, Transfers and Fees policy\". Document IDs belong only on the CITATIONS line.\n\nTHE THREE FLAGS MEAN DIFFERENT THINGS. READ THIS CAREFULLY:\n\nGROUNDED is about YOUR DRAFT, not about the question. Set GROUNDED: true when every factual statement in your DRAFT came from a retrieved document. Writing \"our published policy does not address X\" is itself a grounded statement: it is a fact about our documents, which you have just searched. Set GROUNDED: false only when your DRAFT asserts a policy fact you could not find in a retrieved document, or when you retrieved nothing and your DRAFT therefore contains no policy facts at all. A question that is only partly covered by our documents still produces a GROUNDED: true draft.\n\nNEEDS_HUMAN is about whether your DRAFT is ready to send as it stands. Set NEEDS_HUMAN: true only when the customer needs something you cannot give: their own account data or balances, a decision or an exception, a complaint handled, or an unpublished fact that is the entire substance of their question. If your DRAFT answers what our policy covers and is honest about what it does not, set NEEDS_HUMAN: false. It is ready to send.\n\nCONFIDENCE is how sure you are that the DRAFT is accurate and correctly sourced.\n\nYOUR FINAL ANSWER MUST BE PLAIN TEXT IN EXACTLY THIS FORMAT, WITH EACH LABEL AT THE START OF ITS OWN LINE. DO NOT USE JSON. DO NOT ADD ANY TEXT BEFORE 'DRAFT:' OR AFTER 'NEEDS_HUMAN:'. DO NOT WRAP IN CODE FENCES:\n\nDRAFT: <the exact reply text to send the customer, in full sentences>\nGROUNDED: true or false\nCONFIDENCE: a number between 0 and 1\nCITATIONS: comma-separated doc_id values, or NONE\nNEEDS_HUMAN: true or false"
+          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) Call the Policy Knowledge Base tool AT MOST TWICE total, with two different phrasings that between them cover every topic the customer raised -- group related topics into each search rather than splitting them. Do not call it a third time under any circumstances.\n(4) If a search returns nothing relevant for one topic, stop searching for THAT topic and move to the next one. Only if NO search returns anything relevant at all, answer with GROUNDED: false, CONFIDENCE: 0, CITATIONS: NONE, NEEDS_HUMAN: true, and a DRAFT saying our policy documents do not cover this yet.\n\nANSWER EVERY PART YOU CAN:\nA question often has several parts, and our documents may cover some of them and not others. That is normal and it is NOT a failure. Answer the parts our documents do cover, quoting the figures exactly as published, and then say plainly that the remaining parts are not addressed in our published policy. Never withhold a figure we do publish because some other part of the question is unpublished. If you are asked where a figure is published, name the policy document and the section heading it appears under in the retrieved text.\n\nCOVER EVERY QUESTION THEY ASKED:\nIf the customer numbered their questions, your DRAFT must answer EVERY number, in their order, reusing their numbering. Never stop part way, and never write a blanket sentence such as \"the policy does not cover any additional information beyond the above\" -- that hides which question went unanswered. If one specific item is not covered, say so against that item's own number, and answer the rest normally. Before you give your final answer, re-read the customer's email and check that every question they asked has an answer in your draft.\n\nTHIS BANK RUNS ENTIRELY BY EMAIL:\nThere is no app, no website, no online banking login, no branch and no phone line. Never tell a customer to use an app, log in, visit a branch, or call us, and never invent a support address or phone number. The only way for a customer to do anything is to reply to our email. Say \"reply to this email\" when you need them to act.\nDo not speculate about what other banks or intermediaries charge or do. If our documents do not address it, say only that our published policy does not address it.\n\nWRITING THE DRAFT:\nThe draft is sent as a plain-text email. Do NOT use Markdown: no asterisks for bold, no underscores, no backticks, no headings, no tables, no bullet characters. Write figures inline in ordinary sentences, for example: the fee is Rs 1,500 per outgoing wire. Never put an internal document ID such as doc_payments_and_transfers in the DRAFT -- name the policy in plain words instead, for example \"our Payments, Transfers and Fees policy\". Document IDs belong only on the CITATIONS line.\n\nTHE THREE FLAGS MEAN DIFFERENT THINGS. READ THIS CAREFULLY:\n\nGROUNDED is about YOUR DRAFT, not about the question. Set GROUNDED: true when every factual statement in your DRAFT came from a retrieved document. Writing \"our published policy does not address X\" is itself a grounded statement: it is a fact about our documents, which you have just searched. Set GROUNDED: false only when your DRAFT asserts a policy fact you could not find in a retrieved document, or when you retrieved nothing and your DRAFT therefore contains no policy facts at all. A question that is only partly covered by our documents still produces a GROUNDED: true draft.\n\nNEEDS_HUMAN is about whether your DRAFT is ready to send as it stands. Set NEEDS_HUMAN: true only when the customer needs something you cannot give: their own account data or balances, a decision or an exception, a complaint handled, or an unpublished fact that is the entire substance of their question. If your DRAFT answers what our policy covers and is honest about what it does not, set NEEDS_HUMAN: false. It is ready to send.\n\nCONFIDENCE is how sure you are that the DRAFT is accurate and correctly sourced.\n\nYOUR FINAL ANSWER MUST BE PLAIN TEXT IN EXACTLY THIS FORMAT, WITH EACH LABEL AT THE START OF ITS OWN LINE. DO NOT USE JSON. DO NOT ADD ANY TEXT BEFORE 'DRAFT:' OR AFTER 'NEEDS_HUMAN:'. DO NOT WRAP IN CODE FENCES:\n\nDRAFT: <the exact reply text to send the customer, in full sentences>\nGROUNDED: true or false\nCONFIDENCE: a number between 0 and 1\nCITATIONS: comma-separated doc_id values, or NONE\nNEEDS_HUMAN: true or false"
         }
       },
       "id": "a342f61b-67eb-4d07-841f-b2164cd0a2b4",
@@ -153,7 +153,7 @@
           "value": "banking-policy-index",
           "mode": "id"
         },
-        "topK": 6,
+        "topK": 4,
         "options": {
           "pineconeNamespace": "banking_policy_v2"
         }
@@ -334,7 +334,7 @@
           "fieldValues": [
             {
               "fieldId": "support_case_id",
-              "fieldValue": "={{ $('Extract Case ID').item.json.case_id }}"
+              "fieldValue": "={{ $('Extract Case ID').first().json.case_id }}"
             },
             {
               "fieldId": "rag_doc_ids",
@@ -383,7 +383,7 @@
             {
               "keyName": "id",
               "condition": "eq",
-              "keyValue": "={{ $('Extract Case ID').item.json.case_id }}"
+              "keyValue": "={{ $('Extract Case ID').first().json.case_id }}"
             }
           ]
         },
@@ -391,7 +391,7 @@
           "fieldValues": [
             {
               "fieldId": "status",
-              "fieldValue": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded ? 'resolved' : 'awaiting_human_review' }}"
+              "fieldValue": "={{ $('Save Support Case Draft in Supabase').first().json.threshold_exceeded ? 'resolved' : 'awaiting_human_review' }}"
             }
           ]
         }
@@ -425,31 +425,31 @@
               "id": "rag_case_id",
               "name": "support_case_id",
               "type": "string",
-              "value": "={{ $('Extract Case ID').item.json.case_id }}"
+              "value": "={{ $('Extract Case ID').first().json.case_id }}"
             },
             {
               "id": "rag_status",
               "name": "status",
               "type": "string",
-              "value": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded ? 'resolved' : 'awaiting_human_review' }}"
+              "value": "={{ $('Save Support Case Draft in Supabase').first().json.threshold_exceeded ? 'resolved' : 'awaiting_human_review' }}"
             },
             {
               "id": "rag_grounded",
               "name": "threshold_exceeded",
               "type": "boolean",
-              "value": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded }}"
+              "value": "={{ $('Save Support Case Draft in Supabase').first().json.threshold_exceeded }}"
             },
             {
               "id": "rag_returning",
               "name": "isReturning",
               "type": "boolean",
-              "value": "={{ $('Extract Case ID').item.json.isReturning }}"
+              "value": "={{ $('Extract Case ID').first().json.isReturning }}"
             },
             {
               "id": "rag_inquirer_type",
               "name": "inquirer_type",
               "type": "string",
-              "value": "={{ $('Extract Case ID').item.json.inquirer_type }}"
+              "value": "={{ $('Extract Case ID').first().json.inquirer_type }}"
             }
           ]
         },
@@ -470,7 +470,7 @@
         "tableId": "support_cases",
         "limit": 2,
         "filterType": "string",
-        "filterString": "=customer_email=eq.{{ $('Validate Support Request Payload').item.json.params.customer_email }}&created_at=gte.{{ new Date(Date.now() - 10*60*1000).toISOString() }}&order=created_at.desc"
+        "filterString": "=customer_email=eq.{{ $('Validate Support Request Payload').first().json.params.customer_email }}&created_at=gte.{{ new Date(Date.now() - 10*60*1000).toISOString() }}&order=created_at.desc"
       },
       "id": "d3921dc3-7325-411d-9ab3-a2702e716b76",
       "name": "Check Returning Inquirer",
@@ -549,7 +549,7 @@
           "conditions": [
             {
               "id": "is-auto-answerable",
-              "leftValue": "={{ $('Save Support Case Draft in Supabase').item.json.threshold_exceeded }}",
+              "leftValue": "={{ $('Save Support Case Draft in Supabase').first().json.threshold_exceeded }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
@@ -572,10 +572,10 @@
         220
       ],
       "parameters": {
-        "sendTo": "={{ $('Validate Support Request Payload').item.json.params.customer_email }}",
-        "subject": "=RE: {{ $('Validate Support Request Payload').item.json.params.subject }}",
+        "sendTo": "={{ $('Validate Support Request Payload').first().json.params.customer_email }}",
+        "subject": "=RE: {{ $('Validate Support Request Payload').first().json.params.subject }}",
         "emailType": "text",
-        "message": "=Hello,\n\n{{ $('Save Support Case Draft in Supabase').item.json.groq_draft }}\n\nReference: {{ $('Extract Case ID').item.json.case_id }}\n\nThis answer is grounded in our official policy documents. If it doesn't fully address your question, just reply and a specialist will follow up.\n\nDigital Bank Customer Support",
+        "message": "=Hello,\n\n{{ $('Save Support Case Draft in Supabase').first().json.groq_draft }}\n\nReference: {{ $('Extract Case ID').first().json.case_id }}\n\n{{ String($('Save Support Case Draft in Supabase').first().json.rag_doc_ids || '').replace(/[\\[\\]\"]/g, '') ? 'This answer is grounded in our official policy documents. If it does not fully address your question, just reply and a specialist will follow up.' : 'Just reply to this email if you need anything else.' }}\n\nDigital Bank Customer Support",
         "options": {
           "appendAttribution": false
         }
@@ -613,7 +613,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_request_type: 'support_draft', p_target_id: $('Save Support Case Draft in Supabase').item.json.id, p_subject: 'Policy answer needs review: ' + ($('Validate Support Request Payload').item.json.params.subject || 'customer enquiry'), p_summary: 'A drafted policy answer is waiting to be sent. Confidence ' + $('Save Support Case Draft in Supabase').item.json.confidence_score + '.', p_payload: { support_case_id: $('Extract Case ID').item.json.case_id, confidence_score: $('Save Support Case Draft in Supabase').item.json.confidence_score, inquiry: $('Validate Support Request Payload').item.json.params.inquiry }, p_requested_for_email: $('Validate Support Request Payload').item.json.params.customer_email }) }}",
+        "jsonBody": "={{ JSON.stringify({ p_request_type: 'support_draft', p_target_id: $('Save Support Case Draft in Supabase').first().json.id, p_subject: 'Policy answer needs review: ' + ($('Validate Support Request Payload').first().json.params.subject || 'customer enquiry'), p_summary: 'A drafted policy answer is waiting to be sent. Confidence ' + $('Save Support Case Draft in Supabase').first().json.confidence_score + '.', p_payload: { support_case_id: $('Extract Case ID').first().json.case_id, confidence_score: $('Save Support Case Draft in Supabase').first().json.confidence_score, inquiry: $('Validate Support Request Payload').first().json.params.inquiry }, p_requested_for_email: $('Validate Support Request Payload').first().json.params.customer_email }) }}",
         "options": {
           "response": {
             "response": {
@@ -642,7 +642,7 @@
         "sendTo": "ops-team@yourbank.example",
         "subject": "=[{{ $json.ref_code }}] Policy answer needs review",
         "emailType": "text",
-        "message": "=A customer asked a policy question. The assistant's draft is below. Nothing has been sent to them yet - it needs your decision first.\n\nCustomer: {{ $('Validate Support Request Payload').item.json.params.customer_email }}\nSubject: {{ $('Validate Support Request Payload').item.json.params.subject }}\nCase reference: {{ $('Extract Case ID').item.json.case_id }}\nConfidence: {{ $('Save Support Case Draft in Supabase').item.json.confidence_score }}\nSources: {{ $('Save Support Case Draft in Supabase').item.json.rag_doc_ids && String($('Save Support Case Draft in Supabase').item.json.rag_doc_ids).replace(/[\\[\\]\"]/g, '') || 'none - nothing relevant was retrieved' }}\n\nTHEIR QUESTION\n{{ $('Validate Support Request Payload').item.json.params.inquiry }}\n\nDRAFT ANSWER (not sent)\n{{ $('Save Support Case Draft in Supabase').item.json.groq_draft }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nAPPROVE sends the draft above to the customer as it stands. To send something different, reply APPROVE and add a line starting with NOTE: followed by the wording you want sent instead - that text replaces the draft. REJECT closes the case without emailing the customer.\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ref_code }}\nTYPE: support_draft\n========================",
+        "message": "=A customer asked a policy question. The assistant's draft is below. Nothing has been sent to them yet - it needs your decision first.\n\nCustomer: {{ $('Validate Support Request Payload').first().json.params.customer_email }}\nSubject: {{ $('Validate Support Request Payload').first().json.params.subject }}\nCase reference: {{ $('Extract Case ID').first().json.case_id }}\nConfidence: {{ $('Save Support Case Draft in Supabase').first().json.confidence_score }}\nSources: {{ $('Save Support Case Draft in Supabase').first().json.rag_doc_ids && String($('Save Support Case Draft in Supabase').first().json.rag_doc_ids).replace(/[\\[\\]\"]/g, '') || 'none - nothing relevant was retrieved' }}\n\nTHEIR QUESTION\n{{ $('Validate Support Request Payload').first().json.params.inquiry }}\n\nDRAFT ANSWER (not sent)\n{{ $('Save Support Case Draft in Supabase').first().json.groq_draft }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nAPPROVE sends the draft above to the customer as it stands. To send something different, reply APPROVE and add a line starting with NOTE: followed by the wording you want sent instead - that text replaces the draft. REJECT closes the case without emailing the customer.\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ref_code }}\nTYPE: support_draft\n========================",
         "options": {
           "appendAttribution": false
         }
@@ -664,8 +664,82 @@
         0
       ],
       "parameters": {
-        "jsCode": "// The agent answers in plain text (see the system prompt) instead of structured\n// JSON, because the Groq model available on this account\n// (openai/gpt-oss-safeguard-20b) intermittently fails a structured-output call\n// outright -- confirmed live: retrieval succeeded perfectly and the agent still\n// errored trying to emit JSON. Plain text with labeled lines is far more robust\n// against that failure mode. Output is reshaped into the same { output: {...} }\n// envelope the rest of the workflow already expects, so nothing downstream changed.\nconst raw = String($json.output || $json.text || '').trim();\n\nconst LABELS = 'DRAFT|GROUNDED|CONFIDENCE|CITATIONS|NEEDS_HUMAN';\n\nfunction field(label) {\n  // NOTE: deliberately NO 'm' flag. With it, `$` matches end-of-LINE, so the lazy\n  // capture below stops at the first blank line and a two-paragraph answer gets\n  // truncated to its first paragraph -- which is exactly what happened on the\n  // first live test. Line-start is anchored explicitly with (?:^|\\n) instead.\n  const re = new RegExp(\n    '(?:^|\\\\n)[ \\\\t]*' + label + '[ \\\\t]*:[ \\\\t]*([\\\\s\\\\S]*?)(?=\\\\n[ \\\\t]*(?:' + LABELS + ')[ \\\\t]*:|$)',\n    'i'\n  );\n  const m = raw.match(re);\n  return m ? m[1].trim() : null;\n}\n\nconst FALLBACK_DRAFT = 'Thank you for contacting Digital Bank. We were unable to find a confirmed answer to your question in our policy documents. A specialist will review your question and send you an accurate, verified answer shortly.';\n\nconst draftText = field('DRAFT');\nconst groundedText = field('GROUNDED');\nconst confidenceText = field('CONFIDENCE');\nconst citationsText = field('CITATIONS');\nconst needsHumanText = field('NEEDS_HUMAN');\n\n// If the model didn't follow the format at all, fail safe exactly like an agent\n// error: no draft, not grounded, needs a human. Never guess a confident answer\n// out of unparseable text.\nif (!draftText) {\n  return [{ json: { output: {\n    draft: FALLBACK_DRAFT,\n    grounded: false, confidence: 0, citations: [], needs_human: true,\n    parse_failed: true, raw_output: raw.slice(0, 500)\n  } } }];\n}\n\nlet grounded = /^true$/i.test(groundedText || '');\nlet confidence = parseFloat(confidenceText);\nif (isNaN(confidence)) confidence = 0;\nconfidence = Math.max(0, Math.min(1, confidence));\n\nconst citations = (citationsText && !/^none$/i.test(citationsText))\n  ? citationsText.split(',').map(s => s.trim()).filter(Boolean)\n  : [];\n\nlet needsHuman = needsHumanText ? /^true$/i.test(needsHumanText) : !grounded;\n\n// GUARDRAIL: an answer that claims to be grounded but points at nothing.\n//\n// The confidence threshold alone cannot catch this. A model that has drifted\n// onto a similar-but-wrong document, or that is reciting plausible banking\n// knowledge it was trained on rather than OUR policy, reports high confidence\n// and no citation -- it has nothing to cite because nothing it used came from\n// the knowledge base. That is the exact failure this bank cannot ship: a\n// confident, fluent, invented fee or limit.\n//\n// So grounded + zero citations is treated as NOT grounded, whatever the model\n// says about its own confidence, and goes to a human.\nlet citationGuardTripped = false;\nif (grounded && citations.length === 0) {\n  citationGuardTripped = true;\n  grounded = false;\n  needsHuman = true;\n  confidence = 0;\n}\n\n// GUARDRAIL: a multi-part question answered only in part.\n//\n// A customer sent six numbered questions. The agent answered two, wrote\n// \"3. The policy does not cover any additional information beyond the above\"\n// to stand for the rest, and reported grounded with confidence 0.95 and no\n// human needed -- so it went straight out. Four of those six were fully\n// covered by our documents; it had simply never searched for them.\n//\n// Neither existing guard can see this. The citation guard checks that an\n// answer points at something, and this one did. The threshold checks how\n// sure the model is, and it was sure -- correctly, about the third of the\n// question it had actually read. Confidence says nothing about coverage.\n//\n// So when the customer numbers their questions, the draft has to reach\n// their last number. If it does not, a human sees it instead of it going out.\nfunction numberedItems(text) {\n  const found = new Set();\n  const re = /(?:^|\\n)[ \\t>]*(\\d{1,2})[.)][ \\t]+\\S/g;\n  let m;\n  while ((m = re.exec(text)) !== null) found.add(parseInt(m[1], 10));\n  return found;\n}\nconst askedNumbers = numberedItems(String($('Extract Case ID').item.json.inquiry || ''));\nlet answerTruncated = false;\nif (askedNumbers.size >= 3) {\n  const lastAsked = Math.max.apply(null, Array.from(askedNumbers));\n  if (!numberedItems('\\n' + draftText).has(lastAsked)) {\n    answerTruncated = true;\n    needsHuman = true;\n  }\n}\n\nreturn [{ json: { output: {\n  draft: citationGuardTripped ? FALLBACK_DRAFT : draftText,\n  grounded, confidence, citations, needs_human: needsHuman,\n  citation_guard_tripped: citationGuardTripped,\n  answer_truncated: answerTruncated\n} } }];"
+        "jsCode": "// The agent answers in plain text (see the system prompt) instead of structured\n// JSON, because the Groq model available on this account\n// (openai/gpt-oss-safeguard-20b) intermittently fails a structured-output call\n// outright -- confirmed live: retrieval succeeded perfectly and the agent still\n// errored trying to emit JSON. Plain text with labeled lines is far more robust\n// against that failure mode. Output is reshaped into the same { output: {...} }\n// envelope the rest of the workflow already expects, so nothing downstream changed.\nconst raw = String($json.output || $json.text || '').trim();\n\nconst LABELS = 'DRAFT|GROUNDED|CONFIDENCE|CITATIONS|NEEDS_HUMAN';\n\nfunction field(label) {\n  // NOTE: deliberately NO 'm' flag. With it, `$` matches end-of-LINE, so the lazy\n  // capture below stops at the first blank line and a two-paragraph answer gets\n  // truncated to its first paragraph -- which is exactly what happened on the\n  // first live test. Line-start is anchored explicitly with (?:^|\\n) instead.\n  const re = new RegExp(\n    '(?:^|\\\\n)[ \\\\t]*' + label + '[ \\\\t]*:[ \\\\t]*([\\\\s\\\\S]*?)(?=\\\\n[ \\\\t]*(?:' + LABELS + ')[ \\\\t]*:|$)',\n    'i'\n  );\n  const m = raw.match(re);\n  return m ? m[1].trim() : null;\n}\n\nconst FALLBACK_DRAFT = 'Thank you for contacting Digital Bank. We were unable to find a confirmed answer to your question in our policy documents. A specialist will review your question and send you an accurate, verified answer shortly.';\n\nconst draftText = field('DRAFT');\nconst groundedText = field('GROUNDED');\nconst confidenceText = field('CONFIDENCE');\nconst citationsText = field('CITATIONS');\nconst needsHumanText = field('NEEDS_HUMAN');\n\n// If the model didn't follow the format at all, fail safe exactly like an agent\n// error: no draft, not grounded, needs a human. Never guess a confident answer\n// out of unparseable text.\nif (!draftText) {\n  return [{ json: { output: {\n    draft: FALLBACK_DRAFT,\n    grounded: false, confidence: 0, citations: [], needs_human: true,\n    parse_failed: true, raw_output: raw.slice(0, 500)\n  } } }];\n}\n\nlet grounded = /^true$/i.test(groundedText || '');\nlet confidence = parseFloat(confidenceText);\nif (isNaN(confidence)) confidence = 0;\nconfidence = Math.max(0, Math.min(1, confidence));\n\nconst citations = (citationsText && !/^none$/i.test(citationsText))\n  ? citationsText.split(',').map(s => s.trim()).filter(Boolean)\n  : [];\n\nlet needsHuman = needsHumanText ? /^true$/i.test(needsHumanText) : !grounded;\n\n// GUARDRAIL: an answer that claims to be grounded but points at nothing.\n//\n// The confidence threshold alone cannot catch this. A model that has drifted\n// onto a similar-but-wrong document, or that is reciting plausible banking\n// knowledge it was trained on rather than OUR policy, reports high confidence\n// and no citation -- it has nothing to cite because nothing it used came from\n// the knowledge base. That is the exact failure this bank cannot ship: a\n// confident, fluent, invented fee or limit.\n//\n// So grounded + zero citations is treated as NOT grounded, whatever the model\n// says about its own confidence, and goes to a human.\nlet citationGuardTripped = false;\nif (grounded && citations.length === 0) {\n  citationGuardTripped = true;\n  grounded = false;\n  needsHuman = true;\n  confidence = 0;\n}\n\n// GUARDRAIL: a multi-part question answered only in part.\n//\n// A customer sent six numbered questions. The agent answered two, wrote\n// \"3. The policy does not cover any additional information beyond the above\"\n// to stand for the rest, and reported grounded with confidence 0.95 and no\n// human needed -- so it went straight out. Four of those six were fully\n// covered by our documents; it had simply never searched for them.\n//\n// Neither existing guard can see this. The citation guard checks that an\n// answer points at something, and this one did. The threshold checks how\n// sure the model is, and it was sure -- correctly, about the third of the\n// question it had actually read. Confidence says nothing about coverage.\n//\n// So when the customer numbers their questions, the draft has to reach\n// their last number. If it does not, a human sees it instead of it going out.\nfunction numberedItems(text) {\n  const found = new Set();\n  const re = /(?:^|\\n)[ \\t>]*(\\d{1,2})[.)][ \\t]+\\S/g;\n  let m;\n  while ((m = re.exec(text)) !== null) found.add(parseInt(m[1], 10));\n  return found;\n}\nconst askedNumbers = numberedItems(String($('Extract Case ID').first().json.inquiry || ''));\nlet answerTruncated = false;\nif (askedNumbers.size >= 3) {\n  const lastAsked = Math.max.apply(null, Array.from(askedNumbers));\n  if (!numberedItems('\\n' + draftText).has(lastAsked)) {\n    answerTruncated = true;\n    needsHuman = true;\n  }\n}\n\nreturn [{ json: { output: {\n  draft: citationGuardTripped ? FALLBACK_DRAFT : draftText,\n  grounded, confidence, citations, needs_human: needsHuman,\n  citation_guard_tripped: citationGuardTripped,\n  answer_truncated: answerTruncated\n} } }];"
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "too-many",
+              "leftValue": "={{ $json.questionCount }}",
+              "rightValue": 2,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1f0c2a4-7d31-4e58-9a6c-2f8e51c0d7aa",
+      "name": "More Than Two Questions?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        -128
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "split-draft",
+              "name": "groq_draft",
+              "type": "string",
+              "value": "=You have asked {{ $('Extract Case ID').first().json.questionCount }} separate questions in one email. So that each one gets a complete and accurate answer from our policy documents, we answer up to two questions per email.\n\nPlease reply with your first one or two questions and we will answer them straight away, then send the rest in a follow-up email. There is no limit on how many emails you send us.\n\nFor reference, here is what you asked:\n\n{{ $('Extract Case ID').first().json.questionList }}"
+            },
+            {
+              "id": "split-citations",
+              "name": "citations",
+              "type": "array",
+              "value": "={{ [] }}"
+            },
+            {
+              "id": "split-confidence",
+              "name": "confidence_score",
+              "type": "number",
+              "value": 1
+            },
+            {
+              "id": "split-threshold",
+              "name": "threshold_exceeded",
+              "type": "boolean",
+              "value": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c2e1d3b5-8a42-4f69-b07d-3a9f62d1e8bb",
+      "name": "Ask Customer To Split Questions",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        -224
+      ]
     }
   ],
   "connections": {
@@ -717,7 +791,7 @@
       "main": [
         [
           {
-            "node": "Draft Grounded Reply",
+            "node": "More Than Two Questions?",
             "type": "main",
             "index": 0
           }
@@ -911,6 +985,35 @@
       ]
     },
     "Hold Draft for Review": {
+      "main": [
+        [
+          {
+            "node": "Save Support Case Draft in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "More Than Two Questions?": {
+      "main": [
+        [
+          {
+            "node": "Ask Customer To Split Questions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Draft Grounded Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Customer To Split Questions": {
       "main": [
         [
           {

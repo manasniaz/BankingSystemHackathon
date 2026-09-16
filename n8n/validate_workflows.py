@@ -3,6 +3,17 @@ import json
 import re
 import sys
 
+def is_placeholder_domain(domain, allowed):
+    """True for a domain that cannot belong to anyone.
+
+    `.example` is reserved by RFC 2606 for exactly this purpose, so any domain
+    under it is safe without being enumerated -- which stops the allowlist
+    growing a new entry every time an example needs a new name.
+    """
+    d = domain.lower().rstrip(".")
+    return d in allowed or d == "example" or d.endswith(".example")
+
+
 workflows_dir = os.path.join(os.path.dirname(__file__), "workflows")
 files = [f for f in os.listdir(workflows_dir) if f.endswith(".json")]
 
@@ -134,7 +145,7 @@ for file_name in sorted(files):
         real_addresses = sorted({
             addr for addr, domain in
             re.findall(r"([A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,}))", json_str)
-            if domain.lower() not in PLACEHOLDER_DOMAINS
+            if not is_placeholder_domain(domain, PLACEHOLDER_DOMAINS)
         })
         if real_addresses:
             print(f"  [FAIL] Non-placeholder email address(es): {', '.join(real_addresses)}")
@@ -192,7 +203,7 @@ for dirpath, dirnames, filenames in os.walk(repo_root):
         except (UnicodeDecodeError, OSError):
             continue
         for addr, domain in addr_re.findall(content):
-            if domain.lower().rstrip(".") not in PLACEHOLDER_DOMAINS:
+            if not is_placeholder_domain(domain, PLACEHOLDER_DOMAINS):
                 leaks.setdefault(os.path.relpath(full, repo_root), set()).add(addr)
 
 print("\n--- Repository-wide address scan ---")

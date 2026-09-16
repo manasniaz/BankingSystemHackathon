@@ -489,4 +489,38 @@ The model follows a *prohibition* ("do not call it a third time under any circum
 - **Account maintenance and service charges.** Nothing anywhere stated what we charge to hold an account — not because there is an undisclosed fee, but because "nothing" had never been written down. Verified against the schema first: no migration charges a maintenance, monthly, dormancy or closure fee. Now stated explicitly, with the stronger commitment that the fee tables are exhaustive and a charge not listed is not made.
 - **Dispute turnaround.** Only inferable by combining "disputes are decided by a human" in document 05 with "human-reviewed replies usually within one business day" in document 06. Now stated in the document about disputes, where someone asking the question will actually find it, along with the fact that a dispute is never closed by the passage of time.
 
-**And a newsletter that cost us an LLM call.** A Pinecone marketing email from `community@trypinecone.com` passed the automated-sender filter, opened a support case, and spent a Groq call replying "I didn't see a specific question in it." The filter only ever inspected the address. Bulk mail announces itself in its headers — a human writing to their bank does not send `List-Unsubscribe` — so that is now the primary test, written so that it is simply false if this Gmail node version does not surface headers rather than throwing. The address list was widened only to local parts no personal banking customer would write from; `info@`, `hello@`, `team@` and `contact@` were deliberately left out, because a false positive here silently ignores a real customer, which is far worse than a newsletter costing one call.
+**And a newsletter that cost us an LLM call.** A Pinecone marketing email from `community@vendor.example` passed the automated-sender filter, opened a support case, and spent a Groq call replying "I didn't see a specific question in it." The filter only ever inspected the address. Bulk mail announces itself in its headers — a human writing to their bank does not send `List-Unsubscribe` — so that is now the primary test, written so that it is simply false if this Gmail node version does not surface headers rather than throwing. The address list was widened only to local parts no personal banking customer would write from; `info@`, `hello@`, `team@` and `contact@` were deliberately left out, because a false positive here silently ignores a real customer, which is far worse than a newsletter costing one call.
+
+### Session 12, sixth pass: two questions per email, and a lesson in changing one thing at a time
+
+The six-part email would not answer. Every attempt to make it answer made things worse, and the fix in the end was not a fix to the model at all.
+
+**The decision, which was the user's: answer up to two questions per email.** A reply stretched across six unrelated subjects is where partial and vague answers come from — the same reply that had silently dropped four of six. So the count is taken in `Extract Case ID`, **before any model runs**, and an over-long email is answered immediately with a note asking for one or two at a time, echoing their questions back so nobody retypes anything. Verified: `metadata: {}` on that execution — zero LLM calls, zero embeddings, 3.5 seconds. An over-long email now costs nothing at all, where before it cost four calls and failed anyway. The limit is published in the service standards table rather than being a hidden behaviour.
+
+**My own detour, recorded because the pattern matters.** Chasing the rate limit I changed four things in sequence, each on a plausible theory, none measured against a control:
+
+| Change | Theory | What actually happened |
+|---|---|---|
+| `topK` 4 → 6 | more coverage per search | 12 chunks per call, crossed the token limit |
+| `maxIterations` 8, 12 | bound the loop | not honoured by this node version at all |
+| `retryOnFail`, 3 tries | survive a blip | restarted the runaway; 3m49s of one email |
+| prompt 4,749 → 2,639 chars | fewer tokens per call | blamed for empty output it did not cause |
+
+Every one of those was reverted. The prompt compression is the instructive one: I attributed two empty responses to it and rewrote the prompt back, and the empty responses continued — because the real cause was a node I had inserted two minutes earlier, and the timeline said so plainly if I had read it before theorising. **The empty outputs began at execution 404, immediately after the IF node went in, not at 400 where the prompt changed.**
+
+**The actual bug: `.item` is a lineage lookup, and inserting a node breaks it.** `$('Extract Case ID').item.json.case_id` walks n8n's paired-item chain backwards. Putting the question-cap IF between `Extract Case ID` and the agent broke that chain across the agent node, and the reference silently became `null` — first surfacing as a NOT NULL violation on the draft insert, then as an empty prompt handed to the model (which returned an empty completion, caught as `parse_failed` and failed safe), and finally as `Cannot read properties of undefined (reading 'pairedItem')`. Three different symptoms, one cause.
+
+WF-04 handles exactly one support case per execution: `Extract Case ID` collapses the returning-inquirer rows into a single item and nothing downstream fans out. So **`.first()` is both correct and immune to lineage changes**, and all 35 references now use it. That removes the whole class of breakage the next time a node is inserted mid-graph — which is worth more than the one fix, because this failure is silent until something downstream happens to have a NOT NULL constraint.
+
+**A near-miss, caught the same way as the last one.** Writing the question-counting code through a shell heredoc collapsed every doubled backslash, so `\n` and `\t` landed in the node as a **real newline and tab inside a regex literal** — which JavaScript cannot parse. Reading back what was actually written, rather than what was intended, caught it before it deployed. This repo has now been bitten twice by the same mechanism (previously `\b` becoming 0x08), so code containing backslashes is written to a file and run, never piped through a shell.
+
+**The validator caught me leaking an address into this file.** Writing up the newsletter bug, I put the real sender address in the prose. The repo-wide scan added last session failed the build on it. It now also accepts any domain under `.example`, which RFC 2606 reserves for exactly this purpose, so the allowlist stops growing an entry every time an example needs a new name.
+
+**Verified end to end after all of it**, each against the live agent, live Pinecone and the live database:
+
+| Case | Result |
+|---|---|
+| Wire fee and daily limit | confidence 0.95, cited `doc_payments_and_transfers`, **resolved and auto-sent** |
+| Six numbered questions | split request sent, **zero LLM calls** |
+| Platinum credit card (uncovered) | escalated, no citations, canned wording |
+| Duplicate-charge complaint | escalated for a human, not auto-sent |
