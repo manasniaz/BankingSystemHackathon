@@ -163,3 +163,28 @@ Rotating also clears the recent failure counters, so an honest operator is not l
 ### One team, not one address
 
 `staff_check()` answers three things the routing layer needs: whether this sender is staff, which mailbox is the team inbox (the oldest active operator, so enrolling a second one does not redirect the bank's mail), and how many operators there are. Before this the team was a single hardcoded address in a Code node, which quietly meant a second operator could never have worked.
+
+## 029: the administrator, and approval before access
+
+| # | File | What it adds |
+|---|---|---|
+| 029 | `029_admin_role_and_staff_approval.sql` | `is_bank_admin()`. `operator_credit_account()` becomes admin-only. `enrol_bank_staff()` raises an approval request instead of granting access. `remove_bank_staff()`. `resolve_ops_approval()` gains the `staff_enrolment` type, refuses any caller who is not staff, and refuses a staff-enrolment decision from anyone who is not an administrator. |
+
+### Why the role split exists
+
+Migration 028 had two properties that were fine apart and dangerous together: the pass phrase enrolled you instantly, and any operator could credit any account. Learn the phrase, enrol, credit yourself. Splitting the role closes it.
+
+- **Only an administrator can credit an account.** Every other operations command moves money that already exists or decides something a customer asked for. A credit conjures a balance out of the treasury, and that stays with one pair of hands.
+- **The pass phrase asks; it does not admit.** It raises an `OPS-` request that an administrator answers `APPROVE` or `REJECT`, exactly like every other human decision in this bank.
+- **Only an administrator can decide a staff-enrolment request.** Otherwise an operator approves the next operator and the phrase is self-propagating.
+- **An administrator cannot be removed this way**, themselves included, which stops the bank being left with nobody able to approve anything.
+
+A leaked phrase is now an annoyance — some requests to decline — rather than a theft.
+
+### Removal
+
+`remove_bank_staff()` deactivates rather than deletes: the audit trail still points at a row, and `is_bank_staff()` only counts active ones. A removed address is immediately an ordinary member of the public — free to open a customer account, or to ask to rejoin, which the administrator would have to approve again. Their old failed guesses are cleared so a stale lockout does not follow them, and any enrolment request of theirs still in the queue is cancelled.
+
+### An authorisation gap closed on the way past
+
+`resolve_ops_approval()` previously trusted whatever address it was handed. Only the routing layer ever called it, and only with an operator's address — but the routing layer is the part most likely to be edited by mistake, so the rule now lives in the function too.

@@ -1022,7 +1022,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\n\nfunction detect(text) {\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n  return { wantsOpen, wantsPolicy };\n}\n\nlet result = detect(bodyLower);\nif (!result.wantsOpen && !result.wantsPolicy) {\n  result = detect(subjectLower);\n}\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = (meta.bodyText || '').match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(bodyLower + ' ' + subjectLower)) accountType = 'savings';\n\n// ---- date of birth -------------------------------------------------------\n// Accepts 2010-05-14, 14/05/2010, 14 May 2010 and May 14, 2010. Day-first is the\n// default for the ambiguous numeric form, which is the convention in Pakistan;\n// it is only swapped when day-first is impossible.\nconst MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };\n\nfunction pad(n) { return String(n).padStart(2, '0'); }\n\nfunction buildDate(y, m, d) {\n  if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return null;\n  const iso = y + '-' + pad(m) + '-' + pad(d);\n  const parsed = new Date(iso + 'T00:00:00Z');\n  if (isNaN(parsed.getTime())) return null;\n  // Reject roll-over dates such as 2010-02-31.\n  if (parsed.getUTCFullYear() !== y || parsed.getUTCMonth() + 1 !== m || parsed.getUTCDate() !== d) return null;\n  return iso;\n}\n\nfunction parseDob(text) {\n  const t = String(text || '');\n  let m;\n\n  m = t.match(/\\b((?:19|20)\\d{2})-(\\d{1,2})-(\\d{1,2})\\b/);\n  if (m) { const d = buildDate(+m[1], +m[2], +m[3]); if (d) return d; }\n\n  m = t.match(/\\b(\\d{1,2})(?:st|nd|rd|th)?[\\s.,-]+([A-Za-z]{3,9})[\\s.,-]+((?:19|20)\\d{2})\\b/);\n  if (m) {\n    const mo = MONTHS[m[2].slice(0, 3).toLowerCase()];\n    if (mo) { const d = buildDate(+m[3], mo, +m[1]); if (d) return d; }\n  }\n\n  m = t.match(/\\b([A-Za-z]{3,9})[\\s.,-]+(\\d{1,2})(?:st|nd|rd|th)?[\\s.,-]+((?:19|20)\\d{2})\\b/);\n  if (m) {\n    const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];\n    if (mo) { const d = buildDate(+m[3], mo, +m[2]); if (d) return d; }\n  }\n\n  m = t.match(/\\b(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-]((?:19|20)\\d{2})\\b/);\n  if (m) {\n    let day = +m[1], mon = +m[2];\n    if (day <= 12 && mon > 12) { const tmp = day; day = mon; mon = tmp; }\n    const d = buildDate(+m[3], mon, day);\n    if (d) return d;\n  }\n\n  return null;\n}\n\nconst dobSource = (meta.bodyText || '') + '\\n' + (meta.subject || '');\nconst dateOfBirth = parseDob(dobSource);\n\nlet ageYears = null;\nif (dateOfBirth) {\n  const dob = new Date(dateOfBirth + 'T00:00:00Z');\n  const now = new Date();\n  ageYears = now.getUTCFullYear() - dob.getUTCFullYear();\n  const beforeBirthday = (now.getUTCMonth() < dob.getUTCMonth()) ||\n    (now.getUTCMonth() === dob.getUTCMonth() && now.getUTCDate() < dob.getUTCDate());\n  if (beforeBirthday) ageYears -= 1;\n  if (ageYears < 0 || ageYears > 120) ageYears = null;\n}\n\n// ---- guardian email ------------------------------------------------------\nconst emailRe = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g;\nconst allEmails = (meta.bodyText || '').match(emailRe) || [];\nconst candidates = allEmails\n  .map(e => e.toLowerCase())\n  .filter(e => e !== meta.fromEmail && !e.endsWith('@yourbank.example'));\n\nlet guardianEmail = null;\nconst labelled = (meta.bodyText || '').match(/(?:guardian|parent|father|mother|mum|mom|dad)[^\\n]{0,40}?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})/i);\nif (labelled) guardianEmail = labelled[1].toLowerCase();\nif (!guardianEmail && candidates.length === 1) guardianEmail = candidates[0];\nif (guardianEmail === meta.fromEmail) guardianEmail = null;\n\n// ---- phone ---------------------------------------------------------------\nlet phoneNumber = null;\nconst phoneMatch = (meta.bodyText || '').match(/(?:phone|mobile|cell|contact)[^\\n]{0,20}?((?:\\+?92|0)[\\s-]?\\d{3}[\\s-]?\\d{7})/i);\nif (phoneMatch) phoneNumber = phoneMatch[1].replace(/\\s+/g, ' ').trim();\n\nreturn [{ json: {\n  wantsOpen: result.wantsOpen,\n  wantsPolicy: result.wantsPolicy,\n  fullName,\n  accountType,\n  dateOfBirth,\n  ageYears,\n  isMinor: ageYears !== null && ageYears < 18,\n  guardianEmail,\n  phoneNumber,\n  fromEmail: meta.fromEmail,\n  subject: meta.subject,\n  bodyText: meta.bodyText\n} }];"
+        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\n\nfunction detect(text) {\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms|hours|branch|support|help)\\b/.test(text);\n  return { wantsOpen, wantsPolicy };\n}\n\nlet result = detect(bodyLower);\nif (!result.wantsOpen && !result.wantsPolicy) {\n  result = detect(subjectLower);\n}\n\nlet fullName = null;\nconst fromMatch = String(meta.rawFrom || '').match(/^\"?([^\"<]+?)\"?\\s*<[^>]+>$/);\nif (fromMatch && fromMatch[1].trim()) fullName = fromMatch[1].trim();\nif (!fullName) {\n  const nameMatch = (meta.bodyText || '').match(/my name is\\s+([A-Za-z][A-Za-z\\s.'-]{1,60})/i);\n  if (nameMatch) fullName = nameMatch[1].trim();\n}\nif (!fullName) fullName = meta.fromEmail.split('@')[0];\n\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(bodyLower + ' ' + subjectLower)) accountType = 'savings';\n\n// ---- date of birth -------------------------------------------------------\n// Accepts 2010-05-14, 14/05/2010, 14 May 2010 and May 14, 2010. Day-first is the\n// default for the ambiguous numeric form, which is the convention in Pakistan;\n// it is only swapped when day-first is impossible.\nconst MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };\n\nfunction pad(n) { return String(n).padStart(2, '0'); }\n\nfunction buildDate(y, m, d) {\n  if (!y || !m || !d || m < 1 || m > 12 || d < 1 || d > 31) return null;\n  const iso = y + '-' + pad(m) + '-' + pad(d);\n  const parsed = new Date(iso + 'T00:00:00Z');\n  if (isNaN(parsed.getTime())) return null;\n  // Reject roll-over dates such as 2010-02-31.\n  if (parsed.getUTCFullYear() !== y || parsed.getUTCMonth() + 1 !== m || parsed.getUTCDate() !== d) return null;\n  return iso;\n}\n\nfunction parseDob(text) {\n  const t = String(text || '');\n  let m;\n\n  m = t.match(/\\b((?:19|20)\\d{2})-(\\d{1,2})-(\\d{1,2})\\b/);\n  if (m) { const d = buildDate(+m[1], +m[2], +m[3]); if (d) return d; }\n\n  m = t.match(/\\b(\\d{1,2})(?:st|nd|rd|th)?[\\s.,-]+([A-Za-z]{3,9})[\\s.,-]+((?:19|20)\\d{2})\\b/);\n  if (m) {\n    const mo = MONTHS[m[2].slice(0, 3).toLowerCase()];\n    if (mo) { const d = buildDate(+m[3], mo, +m[1]); if (d) return d; }\n  }\n\n  m = t.match(/\\b([A-Za-z]{3,9})[\\s.,-]+(\\d{1,2})(?:st|nd|rd|th)?[\\s.,-]+((?:19|20)\\d{2})\\b/);\n  if (m) {\n    const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];\n    if (mo) { const d = buildDate(+m[3], mo, +m[2]); if (d) return d; }\n  }\n\n  m = t.match(/\\b(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-]((?:19|20)\\d{2})\\b/);\n  if (m) {\n    let day = +m[1], mon = +m[2];\n    if (day <= 12 && mon > 12) { const tmp = day; day = mon; mon = tmp; }\n    const d = buildDate(+m[3], mon, day);\n    if (d) return d;\n  }\n\n  return null;\n}\n\nconst dobSource = (meta.bodyText || '') + '\\n' + (meta.subject || '');\nconst dateOfBirth = parseDob(dobSource);\n\nlet ageYears = null;\nif (dateOfBirth) {\n  const dob = new Date(dateOfBirth + 'T00:00:00Z');\n  const now = new Date();\n  ageYears = now.getUTCFullYear() - dob.getUTCFullYear();\n  const beforeBirthday = (now.getUTCMonth() < dob.getUTCMonth()) ||\n    (now.getUTCMonth() === dob.getUTCMonth() && now.getUTCDate() < dob.getUTCDate());\n  if (beforeBirthday) ageYears -= 1;\n  if (ageYears < 0 || ageYears > 120) ageYears = null;\n}\n\n// ---- guardian email ------------------------------------------------------\nconst emailRe = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/g;\nconst allEmails = (meta.bodyText || '').match(emailRe) || [];\nconst refCtx = $('Detect Reference Reply').item.json;\nconst notGuardian = [meta.fromEmail, refCtx.bankEmail, refCtx.opsTeamEmail]\n  .map(e => String(e || '').toLowerCase());\nconst candidates = allEmails\n  .map(e => e.toLowerCase())\n  .filter(e => notGuardian.indexOf(e) === -1);\n\nlet guardianEmail = null;\nconst labelled = (meta.bodyText || '').match(/(?:guardian|parent|father|mother|mum|mom|dad)[^\\n]{0,40}?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})/i);\nif (labelled) guardianEmail = labelled[1].toLowerCase();\nif (!guardianEmail && candidates.length === 1) guardianEmail = candidates[0];\nif (guardianEmail === meta.fromEmail) guardianEmail = null;\n\n// ---- phone ---------------------------------------------------------------\nlet phoneNumber = null;\nconst phoneMatch = (meta.bodyText || '').match(/(?:phone|mobile|cell|contact)[^\\n]{0,20}?((?:\\+?92|0)[\\s-]?\\d{3}[\\s-]?\\d{7})/i);\nif (phoneMatch) phoneNumber = phoneMatch[1].replace(/\\s+/g, ' ').trim();\n\nreturn [{ json: {\n  wantsOpen: result.wantsOpen,\n  wantsPolicy: result.wantsPolicy,\n  fullName,\n  accountType,\n  dateOfBirth,\n  ageYears,\n  isMinor: ageYears !== null && ageYears < 18,\n  guardianEmail,\n  phoneNumber,\n  fromEmail: meta.fromEmail,\n  subject: meta.subject,\n  bodyText: meta.bodyText\n} }];"
       },
       "id": "8d42132d-de78-4e3b-a0bb-adbff9e39a9f",
       "name": "Extract New Sender Intent",
@@ -2194,7 +2194,7 @@
     },
     {
       "parameters": {
-        "sendTo": "ops-team@yourbank.example",
+        "sendTo": "={{ $('Detect Reference Reply').item.json.opsTeamEmail }}",
         "subject": "=[{{ $('Apply For Loan').item.json.ops_ref_code }}] Loan approval needed - Rs {{ ($('Apply For Loan').item.json.principal_amount / 100).toFixed(2) }}",
         "emailType": "text",
         "message": "=A loan application is above the Rs 200,000 auto-approval ceiling and needs a human decision.\n\nApplicant: {{ $('Apply For Loan').item.json.applicant_name }} ({{ $('Apply For Loan').item.json.applicant_email }})\nPrincipal requested: Rs {{ ($('Apply For Loan').item.json.principal_amount / 100).toFixed(2) }}\nTotal repayable: Rs {{ ($('Apply For Loan').item.json.total_repayable / 100).toFixed(2) }}\nTerm: {{ $('Apply For Loan').item.json.term_months }} month{{ $('Apply For Loan').item.json.term_months === 1 ? '' : 's' }}\nMonthly repayment: Rs {{ ($('Apply For Loan').item.json.monthly_payment_amount / 100).toFixed(2) }}\nInterest: 10% flat\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nOptionally add a line starting with NOTE: to record a reason (it is shown to the customer on a rejection).\n\nKeep the reference {{ $('Apply For Loan').item.json.ops_ref_code }} somewhere in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both.\n\nApproving disburses the funds from the treasury and sets up the repayment standing order automatically. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $('Apply For Loan').item.json.ops_ref_code }}\nTYPE: loan\n========================",
@@ -2933,6 +2933,72 @@
               },
               "renameOutput": true,
               "outputKey": "Policy Answer Rejected"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "enrol-ok-t",
+                    "leftValue": "={{ $json.request_type }}",
+                    "rightValue": "staff_enrolment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "enrol-ok-d",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "approve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Operator Approved"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "enrol-no-t",
+                    "leftValue": "={{ $json.request_type }}",
+                    "rightValue": "staff_enrolment",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "enrol-no-d",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "reject",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Operator Declined"
             }
           ]
         },
@@ -3030,7 +3096,7 @@
         -620
       ],
       "parameters": {
-        "sendTo": "ops-team@yourbank.example",
+        "sendTo": "={{ $('Detect Reference Reply').item.json.opsTeamEmail }}",
         "subject": "=Recorded: {{ $('Resolve Ops Approval').item.json.ref_code }} {{ $('Resolve Ops Approval').item.json.decision }}d",
         "emailType": "text",
         "message": "=Your decision has been applied.\n\nReference: {{ $('Resolve Ops Approval').item.json.ref_code }}\nRequest: {{ $('Resolve Ops Approval').item.json.subject }}\nDecision: {{ ($('Resolve Ops Approval').item.json.decision || '').toUpperCase() }}\nFinal status: {{ $('Resolve Ops Approval').item.json.status }}\nCustomer notified: {{ $('Resolve Ops Approval').item.json.customer_email }}\n{{ $('Resolve Ops Approval').item.json.decision_note ? 'Your note: ' + $('Resolve Ops Approval').item.json.decision_note : '' }}\n\nThis reference is now closed and cannot be decided again.\n\nDigital Bank Automation",
@@ -3056,7 +3122,7 @@
         -340
       ],
       "parameters": {
-        "sendTo": "ops-team@yourbank.example",
+        "sendTo": "={{ $('Detect Reference Reply').item.json.opsTeamEmail }}",
         "subject": "=Could not apply your decision - {{ $('Detect Reference Reply').item.json.refCode }}",
         "emailType": "text",
         "message": "=We could not apply the decision in your last reply.\n\nReference: {{ $('Detect Reference Reply').item.json.refCode }}\nDecision read from your reply: {{ $('Detect Reference Reply').item.json.decision || '(could not tell)' }}\nReason: {{ $json.error }}\n\nTo decide this request, reply to the original alert with the word APPROVE or the word REJECT on its own line, keeping the reference code in the message. Use exactly one of the two words - a reply containing both cannot be read.\n\nOptionally add a line starting with NOTE: to attach a reason or an edited answer.\n\nDigital Bank Automation",
@@ -4390,7 +4456,7 @@
         220
       ],
       "parameters": {
-        "sendTo": "ops-team@yourbank.example",
+        "sendTo": "={{ $('Detect Reference Reply').item.json.opsTeamEmail }}",
         "subject": "=Fraud screen blocked a fully-signed joint transfer - {{ $('Detect Reference Reply').item.json.refCode }}",
         "emailType": "text",
         "message": "=A both-signature transfer collected all its approvals, but the fraud re-check at execution time did not clear it, so nothing was moved.\n\nReference: {{ $('Detect Reference Reply').item.json.refCode }}\nAccount: {{ $('Look Up Joint Action').item.json.account_number }}\nAmount: Rs {{ ($('Look Up Joint Action').item.json.amount / 100).toFixed(2) }}\nApproved by: {{ $('Detect Reference Reply').item.json.fromEmail }}\nRisk score: {{ $('Fraud Check Joint Transfer').item.json.risk_score }}\nReason: {{ $('Fraud Check Joint Transfer').item.json.reason }}\n\nThe joint request is still pending, so it can be retried once this is understood. No ops reply is needed on this email.\n\nDigital Bank Automation",
@@ -5250,7 +5316,7 @@
         1320
       ],
       "parameters": {
-        "sendTo": "ops-team@yourbank.example",
+        "sendTo": "={{ $('Detect Reference Reply').item.json.opsTeamEmail }}",
         "subject": "=[{{ $('Raise Dispute').item.json.ops_ref_code }}] Dispute {{ $('Raise Dispute').item.json.ref_code }} on {{ $('Raise Dispute').item.json.account_number }}",
         "emailType": "text",
         "message": "=A customer has raised a dispute. Every dispute is decided by a person - there is no automated resolution.\n\nDispute: {{ $('Raise Dispute').item.json.ref_code }}\nAccount: {{ $('Raise Dispute').item.json.account_number }}\nRaised by: {{ $('Raise Dispute').item.json.raised_by_email }}\nTransaction: {{ $('Raise Dispute').item.json.transaction_id || 'not specified - customer did not quote a reference' }}\nAmount: {{ $('Raise Dispute').item.json.disputed_amount ? 'Rs ' + ($('Raise Dispute').item.json.disputed_amount / 100).toFixed(2) : 'not specified' }}\n\n{{ $('Raise Dispute').item.json.is_joint_account ? 'THIS IS A JOINT ACCOUNT with ' + $('Raise Dispute').item.json.holder_count + ' holders. The other holders have been asked for their side and their responses are being collected against this dispute. Check them before deciding - one holder disputing a transaction another holder made is the case this process exists for.' : 'Single-holder account.' }}\n\nWHAT THEY SAID\n{{ $('Resolve Dispute Request').item.json.description }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE   - uphold the dispute. If a transaction was identified this REVERSES it, clawing back what it can and recording any shortfall as a debt.\nor\n    REJECT    - the transaction stands.\n\nAdd a line starting with NOTE: to record your reasoning; it is shown to the customer.\n\nKeep the reference {{ $('Raise Dispute').item.json.ops_ref_code }} in the reply - it is already in the subject line. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $('Raise Dispute').item.json.ops_ref_code }}\nTYPE: dispute\n========================",
@@ -5432,7 +5498,7 @@
         1680
       ],
       "parameters": {
-        "jsCode": "// A free-text instruction from the operations mailbox. This is NOT a reply to\n// a reference code -- those are handled upstream. It is ops reaching in to\n// move something that is stuck.\n//\n// Two commands, both deliberately narrow. Anything else is bounced back rather\n// than guessed at, because guessing here moves real money.\nconst meta = $json;\nconst OPS_TEAM_EMAIL = meta.opsTeamEmail;\nconst BANK_EMAIL = meta.bankEmail;\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\nconst text = ownTextOf(meta.bodyText);\nconst lower = (String(meta.subject || '') + '\\n' + text).toLowerCase();\n\nlet note = null;\nconst noteMatch = text.match(/\\bNOTE\\s*:\\s*([\\s\\S]+)$/i);\nif (noteMatch) note = (noteMatch[1] || '').trim() || null;\n\nconst target = accountNumberIn(text)\n            || recipientEmailIn(text, OPS_TEAM_EMAIL, [BANK_EMAIL]);\n\n// NEW PASSPHRASE: is checked first. It is the one command whose argument is\n// free text, so anything else matching inside it would be a misread.\nconst phraseMatch = text.match(/^[ \\t]*NEW[ \\t]+PASS[ \\t]?PHRASE[ \\t]*:[ \\t]*(.+)$/im);\nconst newPhrase = phraseMatch ? phraseMatch[1].trim() : null;\n\nconst mentionsLoan = /\\bloan\\b/.test(lower);\nconst approves = /\\b(approve|approved|authorise|authorize|grant)\\b/.test(lower);\nconst rejects = /\\b(reject|rejected|decline|declined|deny|denied|refuse|refused)\\b/.test(lower);\n\n// \"credit\"/\"give\"/\"pay\" -- the bank handing money to a customer outright.\nconst credits = /\\b(credit|give|grant|issue|pay out|payout|disburse|reimburse|refund|compensate|award)\\b/.test(lower);\n\nlet command = 'unclear';\nlet decision = null;\nconst amount = amountMinorFrom(text);\n\nif (newPhrase) {\n  command = 'passphrase';\n} else if (mentionsLoan && (approves || rejects) && !(approves && rejects)) {\n  command = 'loan_decision';\n  decision = approves ? 'approve' : 'reject';\n} else if (credits && amount > 0 && target) {\n  command = 'credit';\n}\n\n// Never act on half an instruction.\nif (command === 'credit' && (!target || amount <= 0)) command = 'unclear';\nif (command === 'loan_decision' && !target) command = 'unclear';\n\nlet why = null;\nif (command === 'unclear') {\n  if (!target) why = 'no account number or customer email address in the message';\n  else if (mentionsLoan && approves && rejects) why = 'the message says both approve and reject';\n  else if (credits && amount <= 0) why = 'no amount to credit';\n  else why = 'it did not match a supported operations command';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  opsCommand: command, opsTarget: target, opsAmount: amount,\n  opsDecision: decision, opsNote: note, opsUnclearReason: why,\n  opsNewPhrase: newPhrase,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
+        "jsCode": "// A free-text instruction from the operations mailbox. This is NOT a reply to\n// a reference code -- those are handled upstream. It is ops reaching in to\n// move something that is stuck.\n//\n// Two commands, both deliberately narrow. Anything else is bounced back rather\n// than guessed at, because guessing here moves real money.\nconst meta = $json;\nconst OPS_TEAM_EMAIL = meta.opsTeamEmail;\nconst BANK_EMAIL = meta.bankEmail;\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\nconst text = ownTextOf(meta.bodyText);\nconst lower = (String(meta.subject || '') + '\\n' + text).toLowerCase();\n\nlet note = null;\nconst noteMatch = text.match(/\\bNOTE\\s*:\\s*([\\s\\S]+)$/i);\nif (noteMatch) note = (noteMatch[1] || '').trim() || null;\n\nconst target = accountNumberIn(text)\n            || recipientEmailIn(text, OPS_TEAM_EMAIL, [BANK_EMAIL]);\n\n// NEW PASSPHRASE: is checked first. It is the one command whose argument is\n// free text, so anything else matching inside it would be a misread.\nconst phraseMatch = text.match(/^[ \\t]*NEW[ \\t]+PASS[ \\t]?PHRASE[ \\t]*:[ \\t]*(.+)$/im);\nconst newPhrase = phraseMatch ? phraseMatch[1].trim() : null;\n\n// Removing an operator names an address, so it is checked before the credit\n// verbs -- \"remove\" is not one of them, but the target extraction is shared.\nconst removesOperator = /\\b(remove|revoke|deactivate|kick|drop)\\b/.test(lower)\n                     && /\\b(operator|ops|staff|team member|access)\\b/.test(lower);\n\nconst mentionsLoan = /\\bloan\\b/.test(lower);\nconst approves = /\\b(approve|approved|authorise|authorize|grant)\\b/.test(lower);\nconst rejects = /\\b(reject|rejected|decline|declined|deny|denied|refuse|refused)\\b/.test(lower);\n\n// \"credit\"/\"give\"/\"pay\" -- the bank handing money to a customer outright.\nconst credits = /\\b(credit|give|grant|issue|pay out|payout|disburse|reimburse|refund|compensate|award)\\b/.test(lower);\n\nlet command = 'unclear';\nlet decision = null;\nconst amount = amountMinorFrom(text);\n\nif (newPhrase) {\n  command = 'passphrase';\n} else if (removesOperator && target) {\n  command = 'remove_operator';\n} else if (mentionsLoan && (approves || rejects) && !(approves && rejects)) {\n  command = 'loan_decision';\n  decision = approves ? 'approve' : 'reject';\n} else if (credits && amount > 0 && target) {\n  command = 'credit';\n}\n\n// Never act on half an instruction.\nif (command === 'credit' && (!target || amount <= 0)) command = 'unclear';\nif (command === 'loan_decision' && !target) command = 'unclear';\nif (command === 'remove_operator' && !target) command = 'unclear';\n\nlet why = null;\nif (command === 'unclear') {\n  if (!target) why = 'no account number or customer email address in the message';\n  else if (mentionsLoan && approves && rejects) why = 'the message says both approve and reject';\n  else if (credits && amount <= 0) why = 'no amount to credit';\n  else why = 'it did not match a supported operations command';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  opsCommand: command, opsTarget: target, opsAmount: amount,\n  opsDecision: decision, opsNote: note, opsUnclearReason: why,\n  opsNewPhrase: newPhrase,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
       }
     },
     {
@@ -5518,6 +5584,30 @@
               },
               "renameOutput": true,
               "outputKey": "Pass Phrase"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ops-remove",
+                    "leftValue": "={{ $json.opsCommand }}",
+                    "rightValue": "remove_operator",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Remove Operator"
             }
           ]
         },
@@ -5840,7 +5930,7 @@
         "sendTo": "={{ $json.opsTeamEmail }}",
         "subject": "=Operations command not understood",
         "emailType": "text",
-        "message": "=We could not act on that message, and nothing has changed.\n\nWhy: {{ $json.opsUnclearReason }}\n\nSupported operations commands:\n\n  Credit a customer (a grant -- not a loan, nothing to repay):\n    credit 5000 to someone@example.com\n    credit 5000 to ACC-1234567890\n    NOTE: goodwill payment for the delayed transfer\n\n  Decide a loan application that is awaiting review:\n    reject loan for ACC-1234567890\n    approve loan for someone@example.com\n    NOTE: insufficient account history\n\n  Change the operations pass phrase:\n    NEW PASSPHRASE: something only the team knows\n\nTo approve or reject a specific pending request, reply to the email carrying its OPS- reference code with the single word APPROVE or REJECT.\n\nDigital Bank",
+        "message": "=We could not act on that message, and nothing has changed.\n\nWhy: {{ $json.opsUnclearReason }}\n\nSupported operations commands:\n\n  Decide a loan application that is awaiting review:\n    reject loan for ACC-1234567890\n    approve loan for someone@example.com\n    NOTE: insufficient account history\n\n  Change the operations pass phrase:\n    NEW PASSPHRASE: something only the team knows\n\n  Remove someone from the operations team (administrator only):\n    remove operator someone@example.com\n\n  Credit a customer -- administrator only (a grant, nothing to repay):\n    credit 5000 to someone@example.com\n    NOTE: goodwill payment for the delayed transfer\n\nTo approve or reject a specific pending request, reply to the email carrying its OPS- reference code with the single word APPROVE or REJECT.\n\nDigital Bank",
         "options": {
           "appendAttribution": false
         }
@@ -6177,9 +6267,9 @@
       ],
       "parameters": {
         "sendTo": "={{ $('Detect Staff Enrolment').item.json.fromEmail }}",
-        "subject": "=Digital Bank - you are now on the operations team",
+        "subject": "=Digital Bank - operations access requested",
         "emailType": "text",
-        "message": "=Your address is now registered as a Digital Bank operator.\n\nWHAT YOU CAN DO, by emailing this address:\n\n  Credit a customer (a grant -- not a loan, nothing for them to repay):\n    credit 5000 to someone@example.com\n    NOTE: goodwill payment for the delayed transfer\n\n  Decide a loan application awaiting review:\n    reject loan for ACC-1234567890\n    NOTE: insufficient account history\n\n  Change the pass phrase (do this if it has been shared too widely):\n    NEW PASSPHRASE: something only the team knows\n\n  Answer any request carrying an OPS- reference code by replying to it\n  with the single word APPROVE or REJECT.\n\nWHAT YOU CANNOT DO:\n\n  This address can no longer hold a customer account here, and an\n  address that already holds one cannot become an operator. That is\n  deliberate: an operator can credit any account, and nobody should be\n  able to credit their own.\n\nEvery operator has been told you joined, and every action you take is\nrecorded in the audit log against your address.\n\nDigital Bank Operations",
+        "message": "=Your request to join the Digital Bank operations team has been passed to the administrator.\n\nReference: {{ $json.ref_code }}\n\nThe pass phrase is how you ask, not how you get in. Nothing is granted until the administrator approves it, and you will get another email either way. The request expires in 7 days if nobody answers.\n\n{{ $json.reused ? 'You had already asked; this is the same request, not a second one.' : '' }}\n\nDigital Bank Operations",
         "options": {
           "appendAttribution": false
         }
@@ -6201,7 +6291,7 @@
         2384
       ],
       "parameters": {
-        "jsCode": "// One email per existing operator. A new operator appearing silently is the\n// dangerous version of this feature; everyone already on the team hears about\n// it immediately, so a leaked phrase surfaces as a surprise rather than as\n// nothing at all.\nconst res = $('Enrol Bank Staff').item.json;\nconst joined = res.email;\nconst existing = res.existing_staff || [];\n\nreturn existing\n  .filter(e => String(e).toLowerCase() !== String(joined).toLowerCase())\n  .map(e => ({ json: { operatorEmail: e, joined } }));"
+        "jsCode": "// Only administrators decide who joins, so only they are asked.\nconst res = $('Enrol Bank Staff').item.json;\nreturn (res.admin_emails || []).map(a => ({\n  json: { adminEmail: a, applicant: res.email, refCode: res.ref_code }\n}));"
       }
     },
     {
@@ -6214,10 +6304,10 @@
         2384
       ],
       "parameters": {
-        "sendTo": "={{ $json.operatorEmail }}",
-        "subject": "=New operator joined: {{ $json.joined }}",
+        "sendTo": "={{ $json.adminEmail }}",
+        "subject": "=[{{ $json.refCode }}] Operations access requested by {{ $json.applicant }}",
         "emailType": "text",
-        "message": "={{ $json.joined }} has just joined the operations team by sending the pass phrase.\n\nThey can now credit customer accounts, decide loan applications and answer OPS- approvals.\n\nIf you were not expecting this, change the pass phrase immediately by replying to this address with:\n\n    NEW PASSPHRASE: something only the team knows\n\nChanging it does not remove anyone already enrolled -- tell the bank administrator to deactivate them.\n\nDigital Bank",
+        "message": "={{ $json.applicant }} sent the correct operations pass phrase and is asking to join the operations team.\n\nThey hold no customer account here, which is required -- an operator can act on any account.\n\nIF YOU APPROVE, they will be able to:\n  - decide loan applications awaiting review\n  - answer any OPS- approval request\n  - change the operations pass phrase\n\nThey will NOT be able to credit an account. That stays with you.\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nKeep the reference {{ $json.refCode }} in the reply -- it is already in the subject line. It expires in 7 days.\n\nIf you did not expect this, REJECT and change the phrase:\n    NEW PASSPHRASE: something only the team knows\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.refCode }}\nTYPE: staff_enrolment\n========================",
         "options": {
           "appendAttribution": false
         }
@@ -6476,6 +6566,206 @@
       ],
       "parameters": {},
       "notes": "The transfer did not complete, so there is nothing to announce."
+    },
+    {
+      "id": "s12c-1947541503",
+      "name": "Email Operator Approved",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4144,
+        1808
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "=Digital Bank - you are now on the operations team",
+        "emailType": "text",
+        "message": "=The administrator has approved your request. Your address is now a Digital Bank operator.\n\nWHAT YOU CAN DO, by emailing this address:\n\n  Decide a loan application awaiting review:\n    reject loan for ACC-1234567890\n    NOTE: insufficient account history\n\n  Change the pass phrase:\n    NEW PASSPHRASE: something only the team knows\n\n  Answer any request carrying an OPS- reference code, by replying to it with\n  the single word APPROVE or REJECT.\n\nWHAT YOU CANNOT DO:\n\n  Credit an account. That creates money out of the bank's treasury and is\n  reserved to the administrator.\n\n  Hold a customer account at this bank while you are an operator.\n\nEvery action you take is recorded in the audit log against your address.\n\nDigital Bank Operations",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12c-1971455311",
+      "name": "Email Operator Declined",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        4144,
+        1984
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.customer_email }}",
+        "subject": "=Digital Bank - operations access not granted",
+        "emailType": "text",
+        "message": "=The administrator has not granted operations access for this address.\n\n{{ $json.decision_note ? ('Reason: ' + $json.decision_note) : '' }}\n\nNothing has changed. This address is treated exactly as any member of the public: you can open a customer account with it at any time.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12c-3343600649",
+      "name": "Remove Bank Staff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1936,
+        1360
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/remove_bank_staff",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_admin_email\": {{ JSON.stringify($json.fromEmail) }},\n  \"p_target_email\": {{ JSON.stringify($json.opsTarget) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "s12c-9628922855",
+      "name": "Operator Removed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2208,
+        1360
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12c-7885689864",
+      "name": "Email Removed Operator",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        1280
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=Digital Bank - operations access removed",
+        "emailType": "text",
+        "message": "=Your address is no longer on the Digital Bank operations team.\n\nOperations commands sent from it will no longer be acted on, and you can no longer answer OPS- approval requests.\n\nThis address is now treated exactly as any member of the public. You can open a customer account with it, or ask to rejoin the operations team by sending the pass phrase again -- the administrator would have to approve that.\n\nDigital Bank Operations",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12c-5440301828",
+      "name": "Confirm Removal To Admin",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2752,
+        1280
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
+        "subject": "=Operator removed: {{ $('Remove Bank Staff').item.json.email }}",
+        "emailType": "text",
+        "message": "={{ $('Remove Bank Staff').item.json.email }} has been removed from the operations team by {{ $('Remove Bank Staff').item.json.removed_by }}.\n\nStill on the team: {{ ($('Remove Bank Staff').item.json.remaining_staff || []).join(', ') }}\n\nThey have been told, and any enrolment request of theirs still in the queue has been cancelled. They are free to open a customer account or to ask to rejoin.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12c-9797853032",
+      "name": "Email Removal Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        1456
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
+        "subject": "=Operator NOT removed - {{ $('Parse Ops Command').item.json.opsTarget }}",
+        "emailType": "text",
+        "message": "=That operator was not removed and nothing has changed.\n\nTarget: {{ $('Parse Ops Command').item.json.opsTarget }}\nReason: {{ $json.error || 'unknown error' }}\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -7412,6 +7702,20 @@
         ],
         [
           {
+            "node": "Email Operator Approved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Operator Declined",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Confirm Decision to Ops Team",
             "type": "main",
             "index": 0
@@ -8244,6 +8548,13 @@
         ],
         [
           {
+            "node": "Remove Bank Staff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Email Ops - Command Not Understood",
             "type": "main",
             "index": 0
@@ -8536,6 +8847,68 @@
         [
           {
             "node": "Email Recipient - Money Received",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Operator Approved": {
+      "main": [
+        [
+          {
+            "node": "Confirm Decision to Ops Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Operator Declined": {
+      "main": [
+        [
+          {
+            "node": "Confirm Decision to Ops Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Bank Staff": {
+      "main": [
+        [
+          {
+            "node": "Operator Removed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operator Removed?": {
+      "main": [
+        [
+          {
+            "node": "Email Removed Operator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Removal Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Removed Operator": {
+      "main": [
+        [
+          {
+            "node": "Confirm Removal To Admin",
             "type": "main",
             "index": 0
           }
