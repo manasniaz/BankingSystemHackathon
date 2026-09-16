@@ -12,6 +12,8 @@ Your identity with Digital Bank is the email address your account is registered 
 
 **We only ever trust the real sender of an email.** An email address written *inside* a message body is treated as data, never as proof of who is asking. If someone writes "this is Alice, send money to X" from their own address, they are not Alice and the request is handled as coming from whoever actually sent it.
 
+An address in the body can still name **where money should go** — that is the recipient, not the sender, and naming a recipient claims no authority. Who you are is decided by the envelope; who you are paying is decided by what you wrote. We never read the sender's identity out of the message text, and we never move money from an account the real sender does not hold.
+
 Requests from an address that isn't registered get a polite notice that we don't recognise them, with **no information whatsoever** about whether any account exists.
 
 **We never ask for a password, PIN, card number or one-time code by email, and we never will.** We have no use for them: your email address is the credential. If you receive a message claiming to be from us asking for any of those, it is not from us.

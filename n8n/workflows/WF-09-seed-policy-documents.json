@@ -154,7 +154,7 @@
         },
         "options": {}
       },
-      "notes": "Put the Google Drive folder ID here - it is the last part of the folder URL: drive.google.com/drive/folders/<THIS_BIT>. The folder should contain the six policy documents from docs/policy-documents/ in the repository. Everything downstream reads the folder from this one node, so this is the only place to change it."
+      "notes": "The live n8n copy holds the real folder ID. It is redacted here because it is a live pointer into a private Drive, the same way the bank mailbox addresses are redacted in WF-00."
     },
     {
       "id": "a1f2e3d4-0003-4aaa-9003-5b6c7d8e9f03",
@@ -175,7 +175,7 @@
           "folderId": {
             "__rl": true,
             "mode": "id",
-            "value": "={{ $json.folderId }}"
+            "value": "={{ $('Drive Folder Config').item.json.folderId }}"
           },
           "whatToSearch": "files"
         },
@@ -254,7 +254,7 @@
       ],
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "// One Drive file becomes one policy document. The doc_id is derived from the\n// filename so it is stable across re-syncs and readable in a citation: a file\n// named \"01-accounts-and-eligibility.md\" becomes doc_accounts_and_eligibility.\nconst item = $input.item.json;\n\nconst fileName = String(\n  item.name || $('List Policy Documents in Drive').item.json.name || 'untitled'\n);\n\nconst slug = fileName\n  .replace(/\\.[^.]+$/, '')          // drop the extension\n  .replace(/^\\d+[-_\\s]*/, '')       // drop a leading ordering prefix like \"01-\"\n  .toLowerCase()\n  .replace(/[^a-z0-9]+/g, '_')\n  .replace(/^_+|_+$/g, '');\n\nconst text = String(item.text || '').trim();\n\n// A file we could not read is skipped rather than embedded as an empty vector,\n// which would pollute retrieval with a document that matches everything weakly.\nif (!text) {\n  return { json: { doc_id: 'doc_' + slug, text: '', skipped: true, source_file: fileName } };\n}\n\nreturn { json: {\n  doc_id: 'doc_' + (slug || 'untitled'),\n  text,\n  source_file: fileName,\n  skipped: false\n} };"
+        "jsCode": "// One Drive file becomes one policy document. The doc_id is derived from the\n// filename so it is stable across re-syncs and readable in a citation: a file\n// named \"01-accounts-and-eligibility.md\" becomes doc_accounts_and_eligibility.\nconst item = $input.item.json;\n\nconst fileName = String(\n  item.name || $('List Policy Documents in Drive').item.json.name || 'untitled'\n);\n\nconst slug = fileName\n  .replace(/\\.[^.]+$/, '')          // drop the extension\n  .replace(/^\\d+[-_\\s]*/, '')       // drop a leading ordering prefix like \"01-\"\n  .toLowerCase()\n  .replace(/[^a-z0-9]+/g, '_')\n  .replace(/^_+|_+$/g, '');\n\n// The folder also holds the README explaining how this sync works. That is\n// setup documentation, not bank policy -- embedding it would let a customer's\n// question retrieve an answer about Pinecone namespaces and folder IDs.\nconst NON_POLICY = ['readme', 'notes', 'changelog', 'todo'];\nif (NON_POLICY.indexOf(slug) !== -1) {\n  return { json: { doc_id: 'doc_' + slug, text: '', skipped: true, source_file: fileName } };\n}\n\nconst text = String(item.text || '').trim();\n\n// A file we could not read is skipped rather than embedded as an empty vector,\n// which would pollute retrieval with a document that matches everything weakly.\nif (!text) {\n  return { json: { doc_id: 'doc_' + slug, text: '', skipped: true, source_file: fileName } };\n}\n\nreturn { json: {\n  doc_id: 'doc_' + (slug || 'untitled'),\n  text,\n  source_file: fileName,\n  skipped: false\n} };"
       }
     },
     {
@@ -534,6 +534,78 @@
           }
         }
       }
+    },
+    {
+      "id": "s12p-host-0001",
+      "name": "Get Pinecone Index Host",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        800
+      ],
+      "notes": "The data-plane host is per-index and not knowable in advance, so it is looked up rather than hardcoded.",
+      "credentials": {
+        "pineconeApi": {
+          "id": "5T49ZfPpkS1OzAm0",
+          "name": "Pinecone account"
+        }
+      },
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.pinecone.io/indexes/banking-policy-index",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "pineconeApi",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "s12p-clear-0002",
+      "name": "Clear Staging Namespace",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        800
+      ],
+      "notes": "Clears banking_policy_v2 ONLY -- never the live banking_policy namespace. Without this the sync appends, so an edited document ends up in the index twice with the old text still retrievable.",
+      "credentials": {
+        "pineconeApi": {
+          "id": "5T49ZfPpkS1OzAm0",
+          "name": "Pinecone account"
+        }
+      },
+      "parameters": {
+        "method": "POST",
+        "url": "=https://{{ $json.host }}/vectors/delete",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "pineconeApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"deleteAll\": true,\n  \"namespace\": \"banking_policy_v2\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
     }
   ],
   "connections": {
@@ -627,7 +699,7 @@
       "main": [
         [
           {
-            "node": "List Policy Documents in Drive",
+            "node": "Get Pinecone Index Host",
             "type": "main",
             "index": 0
           }
@@ -761,6 +833,28 @@
           {
             "node": "Seed Session 11 Policy Docs",
             "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pinecone Index Host": {
+      "main": [
+        [
+          {
+            "node": "Clear Staging Namespace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Staging Namespace": {
+      "main": [
+        [
+          {
+            "node": "List Policy Documents in Drive",
+            "type": "main",
             "index": 0
           }
         ]

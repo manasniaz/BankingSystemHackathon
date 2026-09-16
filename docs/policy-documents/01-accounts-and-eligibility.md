@@ -83,6 +83,11 @@ An account can only be closed when **all** of the following are true:
 
 If any of these blocks the closure, we tell you which one and what to do about it. Nothing is changed on your account.
 
+Two of these have a way out we will point you to rather than leaving you stuck:
+
+- **A balance** — transfer it to another account, then ask again.
+- **A loan application still awaiting a decision** — if you no longer want that loan, reply asking us to cancel the application. We withdraw it and the account can then be closed. (An *outstanding* loan is different: that money has already been paid to you and must be repaid.)
+
 **Closure is irreversible.** We cannot reopen a closed account, and the account number is never reissued. Because of that, a request to close is never acted on immediately:
 
 1. You email us asking to close the account. If you hold more than one open account, tell us which — we will not guess, and will ask you if it isn't clear.

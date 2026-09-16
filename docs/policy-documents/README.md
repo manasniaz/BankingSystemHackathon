@@ -17,35 +17,34 @@ The assistant does not read these files directly. They are embedded into a Pinec
 
 There are two paths into the index, and they are separate on purpose:
 
-**Path A — the original (live).** WF-09's `Policy Documents` Code nodes hold nineteen shorter policy snippets as string literals. These are what the bank is answering from today, in Pinecone namespace `banking_policy`.
+**Google Drive → `banking_policy_v2` → the assistant.** WF-09's `Sync From Drive Trigger` branch reads these six documents out of a Google Drive folder, extracts their text, and seeds them into Pinecone namespace **`banking_policy_v2`**. WF-04 answers from that namespace. This is how policy is maintained: edit a document in Drive, re-run the sync, done — no code change, no n8n knowledge required.
 
-**Path B — Google Drive (built, not yet run).** WF-09's `Sync From Drive Trigger` branch reads the six documents above out of a Google Drive folder, extracts their text, and seeds them into namespace **`banking_policy_v2`**. This is how policy should be maintained going forward: edit a document in Drive, re-run the sync, done — no code change, no n8n knowledge required.
+The older path still exists: WF-09's `Policy Documents` Code nodes hold nineteen shorter snippets as string literals, seeded into namespace `banking_policy`. That namespace is **no longer what the bank answers from**. It is kept as a rollback target, not as a second source of truth.
 
 ### Why a separate namespace
 
 These six documents are a rewritten consolidation of the original nineteen. Seeding them into the same namespace would leave both versions retrievable, so the assistant could surface an old chunk that contradicts a new one — a fee or a limit that disagrees with itself. In a bank, that is worse than having no answer.
 
-So `v2` is populated alongside the live namespace, verified, and only then switched to. The switch is one field, and so is the rollback.
+So `v2` was populated alongside the live namespace, verified, and only then switched to. The switch is one field in WF-04's `Policy Knowledge Base` node, and so is the rollback.
 
-## Setting up the Drive sync
+## Editing policy
 
-1. Create a folder in Google Drive, e.g. **Digital Bank Policy Documents**.
-2. Upload all six `.md` files from this directory into it. (Native Google Docs work too — the download step exports them as plain text.)
-3. Copy the folder ID from the URL: `drive.google.com/drive/folders/`**`<THIS_PART>`**
-4. In n8n, open **WF-09 Seed Policy Documents** → the **`Drive Folder Config`** node → replace `PASTE_GOOGLE_DRIVE_FOLDER_ID_HERE` with that ID. This is the only place the folder is configured.
-5. Run the workflow from the **`Sync From Drive Trigger`** node.
-6. Confirm six documents landed in `banking_policy_v2`.
-7. Switch the assistant over: **WF-04 RAG Support** → **`Policy Knowledge Base`** node → change the namespace from `banking_policy` to `banking_policy_v2`. Publish.
-8. Ask the bank a policy question by email and check the answer is grounded and correct.
+1. Edit the document **in Drive** (or edit it here and re-upload — see below).
+2. In n8n, run **WF-09 Seed Policy Documents** from the **`Sync From Drive Trigger`** node.
+3. Ask the bank the question by email and check the answer.
 
-To roll back at any point, set that namespace field back to `banking_policy`.
+The sync **clears `banking_policy_v2` before seeding**, so a re-run replaces the namespace rather than adding to it. Without that, an edited document sat in the index beside its own previous version and the assistant could retrieve either — which made the pipeline useless for exactly the case it exists for: correcting a fee, a limit or a rule.
 
-The Drive credential (`Google Drive account`) is already connected in n8n.
+The clear targets `banking_policy_v2` and nothing else. The live `banking_policy` namespace is never touched by it.
 
-## Editing policy afterwards
+There is a window during the sync where the namespace is empty. If a question arrives then, retrieval finds nothing, the assistant does not guess, and the question goes to a human — the same safe failure as any ungrounded question.
 
-Edit the document in Drive, then re-run the Drive sync.
+`README.md` and any file named `notes`, `changelog` or `todo` are skipped rather than embedded. This file explains Pinecone namespaces and folder IDs; it is setup documentation, not bank policy, and a customer's question should never retrieve it.
 
-**One caveat:** the sync currently *adds* to the namespace rather than replacing it, so re-running after an edit leaves the old version of that document in the index alongside the new one. Until that is addressed, the safe sequence for a material change (a fee, a limit, a rule) is to clear the `banking_policy_v2` namespace in the Pinecone console first, then re-run the sync. Automatic clear-and-reseed was deliberately not built: wiping a vector namespace is destructive, and it was not worth adding untested against a component that currently works.
+## Keeping the repository and Drive in step
 
-Keep these files and the Drive copies in step. The repository copy is what a reviewer reads; the Drive copy is what the bank actually answers from.
+The repository copy is what a reviewer reads. The Drive copy is what the bank actually answers from. They are two copies of the same text and they will drift unless you keep them together.
+
+**After editing any of these six files here, re-upload it to the Drive folder and re-run the sync.** Nothing enforces this automatically, so it is worth doing in the same sitting as the edit.
+
+The folder ID lives in exactly one place — WF-09's **`Drive Folder Config`** node — and the Drive credential (`Google Drive account`) is already connected in n8n.

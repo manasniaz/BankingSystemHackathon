@@ -94,3 +94,39 @@ Note the loan check is new here and does not exist in `close_account()` itself -
 **`disputes`** - `ref_code` (`DSP-`), the disputed transaction, who raised it, `holder_input` as a JSONB array of each co-holder position, and the resolution. `is_joint_account` drives whether co-holder input is collected.
 
 All four have RLS enabled with an explicit deny-all policy for `anon` and `authenticated`. Every new function is `SECURITY DEFINER`, owned by `banking_functions`, revoked from `PUBLIC` and granted only to `service_role`.
+
+## 027: bank staff, operator actions, loan withdrawal, recipients by email
+
+| # | File | What it adds |
+|---|---|---|
+| 027 | `027_operator_authority_and_loan_withdrawal.sql` | `bank_staff` and `is_bank_staff()`. `operator_credit_account()` and `operator_decide_loan()`. `withdraw_loan_application()`. `resolve_destination_account()`. A trigger refusing customer profiles for staff addresses, and a rewritten `request_account_closure()` that tells a customer how to unblock a pending-loan refusal. |
+
+### New table
+
+**`bank_staff`** - `email`, `role` (`ops` | `admin`), `is_active`. The database had no concept of an address belonging to the bank rather than to a customer, so the operations mailbox went through account opening like anyone else and ended up holding a loan with a repayment schedule.
+
+**Staff addresses are deliberately not seeded by the migration.** They are real addresses and this repository is public. After applying 027, run this once against the live project with the real address:
+
+```sql
+insert into bank_staff (email, role, note)
+values ('<your-ops-mailbox>@example.com', 'ops', 'Banking operations mailbox')
+on conflict (email) do update set is_active = true;
+```
+
+n8n must agree with it: the ops address is also defined in WF-00's `Detect Reference Reply` node, which is the single place the live workflow holds the bank's own two addresses (`opsTeamEmail` and `bankEmail`) and passes them to every node downstream. The repository copy of that workflow carries placeholders.
+
+### Status vocabulary
+
+`loans.status` gains `withdrawn`, and `ops_approvals.status` gains `cancelled`, so a withdrawn application and its now-pointless pending approval are both representable rather than being forced into `rejected` - which would claim the bank made a decision it never made.
+
+### New functions
+
+**`resolve_destination_account(p_lookup)`** - resolves an account number, a UUID, or a **registered email address** to an account. Reports `ambiguous_recipient` with the candidate account numbers when the recipient holds more than one active account, rather than choosing. Refuses a staff address outright.
+
+**`withdraw_loan_application(p_profile_id, p_loan_id)`** - withdraws an application still in `pending_review` and cancels its pending ops approval in the same transaction. Refuses once the loan is `active`, distinguishing "already disbursed" from "nothing pending" because the two need completely different replies.
+
+**`operator_credit_account(p_operator_email, p_target, p_amount, p_reason)`** - treasury to customer through `process_money_movement()`, audited as `admin`. A grant, not a loan: no `loans` row, no interest, no standing order, nothing to repay. Distinct from a deposit, which is the *customer* claiming to have paid money in and is therefore capped.
+
+**`operator_decide_loan(p_operator_email, p_target, p_decision, p_reason)`** - lets ops decide a pending application by naming the account or customer instead of quoting an `OPS-` code. The reference-code round trip remains the normal path; this exists for clearing something stuck.
+
+Both operator functions verify `is_bank_staff()` first and refuse everyone else.

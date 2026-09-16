@@ -158,3 +158,56 @@ They are deliberately separate. A fraud typology must never be retrievable by th
 ### A recurring hazard, now automated away
 
 Adding a rule to an n8n Switch shifts its fallback output index, and this project has been bitten by it four times (Sessions 7, 9, 10, 11). The graph audit now checks rule count against connection count for every switch and reports any rule or fallback with no target. Run it after every switch change.
+
+## Session 12 changes (2026-09-16)
+
+### The transfer fix
+
+`Execute WF-01 Transfer Sub-Workflow` had no input mapping. An Execute Sub-workflow node forwards the items it receives, and the node feeding it was the fraud service — so WF-01 received `{approved, risk_score, reason, fraud_assessment_id}` and none of the transfer. It rejected every transfer for missing required fields, and the customer was told *"Transfer rejected by banking rules"*.
+
+**`Build Transfer Payload`** sits between `Fraud Cleared?` and the sub-workflow call and rebuilds the payload explicitly from `$('Resolve Transfer Target & Authorize')` and `$('Look Up Destination Account')`. A sub-workflow cannot see the parent's node history; every field it validates has to be handed to it.
+
+### Staff mail never enters the customer path
+
+`Is Reference Reply?` (false) now goes to **`Is Ops Team Sender?`** before anything else. Ops mail branches to `Parse Ops Command` → `Route Ops Command`; everything else continues to the customer flow exactly as before.
+
+`Parse Ops Command` recognises two commands and nothing else:
+
+| Command | Effect |
+|---|---|
+| `credit 5000 to someone@example.com` | `operator_credit_account()` — a grant, no loan, nothing to repay |
+| `reject loan for ACC-1234567890` | `operator_decide_loan()` on a pending application |
+
+`NOTE:` on its own line attaches a reason. Anything unrecognised gets `Email Ops - Command Not Understood`, which lists the supported forms, and nothing changes. A broader parser here would move real money on a guess.
+
+### One place holds the bank's own addresses
+
+`Detect Reference Reply` now emits **`bankEmail`** alongside `opsTeamEmail`, and every node downstream reads them from there instead of repeating a literal. That node is the only place in the live workflow carrying the real addresses; the repository copy carries placeholders.
+
+### Quote stripping works on one-line replies
+
+The cut markers were anchored to line starts. Proton Mail on Android sends the whole reply as a single line, so nothing matched and the quoted original was read as the customer's own text — including the bank's address in `On … <…> wrote:`. Markers are now unanchored and cut at the earliest match anywhere in the body. Fixed in both `Detect Reference Reply` and the intent classifier; in the former the consequence would have been a pending approval decided by the quoted message instead of by the person replying.
+
+### New and changed per workflow
+
+| Workflow | Change |
+|---|---|
+| **WF-00** | 167 → **187 nodes**. `Build Transfer Payload`; `Is Ops Team Sender?` → `Parse Ops Command` → `Route Ops Command` with credit and loan-decision chains and their confirmation emails; `Withdraw Loan Application` → `Loan Withdrawn?` chain with customer and ops emails; `Look Up Destination Account` replaced by an RPC call to `resolve_destination_account()`; new `LOAN_CANCEL` intent and switch rule; question-about-a-past-action guard; `Finalize LLM-Classified Intent` reduced to relabelling only. |
+| **WF-04** | `Policy Knowledge Base` namespace switched from `banking_policy` to **`banking_policy_v2`** — the six consolidated documents synced from Drive. Rollback is this one field. |
+| **WF-09** | 23 → **25 nodes**. `Get Pinecone Index Host` → `Clear Staging Namespace` now run before the Drive listing, so a re-sync **replaces** rather than appends. `Drive Folder Config` holds the real folder ID. `Prepare Drive Policy Document` skips `README.md` and other non-policy files. |
+
+### Intent classification
+
+`LOAN_CANCEL` is tested **before** `LOAN_APPLICATION`, or "cancel my loan application" reads as an application. A question about a past outcome (`why … rejected`, `what happened to …`) routes to support rather than being executed again. A `TRANSFER` with neither an amount nor a recipient is reclassified rather than answered with a complaint about the missing account number.
+
+`Finalize LLM-Classified Intent` was also silently coercing `ACCOUNT_CLOSURE` and `STATEMENT` to `UNKNOWN` — the model was told to emit them but they were absent from its `validLabels` list.
+
+### Transfers by email address
+
+`Look Up Destination Account` now calls `resolve_destination_account()`, which accepts an account number **or** a registered email address and reports ambiguity instead of picking when someone holds several accounts. `Send Destination Not Found Email` explains which of the four cases applies.
+
+An address in the message body may name a recipient. It still never establishes who is asking — identity remains the envelope sender, always.
+
+### An unauthenticated surface worth removing
+
+Five workflows expose public webhooks (`/webhook/transfer`, `/assess-fraud`, `/support-case`, `/approve-draft`, `/approve-loan`) wired straight to live logic. All five are **inert**: each declares `responseMode: responseNode` with no Respond to Webhook node present, so n8n errors at the trigger before any downstream node runs. Not exploitable, but one missing node away from approving loans without authentication in a bank whose only channel is email. Removing them (and retiring WF-05, reachable only through two of them and superseded by the `OPS-` email flow) is left as a decision.

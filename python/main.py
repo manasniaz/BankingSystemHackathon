@@ -57,13 +57,54 @@ class AssessFraudResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str = "ok"
+    status: str = Field(..., description="ok when the service can actually score, degraded otherwise")
+    supabase_configured: bool = Field(..., description="Both Supabase environment variables are set")
+    database: str = Field(..., description="reachable | unreachable | not_configured")
+    detail: Optional[str] = Field(default=None, description="What is wrong, when something is")
 
 
 @app.get("/health", response_model=HealthResponse)
 def health_check():
-    """Health check endpoint required for service readiness probes."""
-    return {"status": "ok"}
+    """Readiness, not just liveness.
+
+    A bare {"status": "ok"} was actively misleading. The process answers it
+    perfectly well while missing the credentials it needs to score anything, so
+    a misconfigured deployment looked healthy and the only symptom was every
+    transfer being stopped by the fail-safe -- which looks like fraud detection
+    working, not like a broken deployment.
+
+    Deliberately still HTTP 200 when degraded: Railway restarts a container
+    whose health check fails, and restarting does not supply a missing
+    environment variable. It would turn a diagnosable problem into a crash loop.
+    Read the body, not the status code.
+    """
+    missing = [name for name, value in (
+        ("SUPABASE_URL", SUPABASE_URL),
+        ("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY),
+    ) if not value]
+
+    if missing:
+        return HealthResponse(
+            status="degraded",
+            supabase_configured=False,
+            database="not_configured",
+            detail=("Missing environment variable(s): " + ", ".join(missing) +
+                    ". Fraud scoring cannot run: every assessment fails safe, "
+                    "scores 100, and blocks the transfer."),
+        )
+
+    try:
+        create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) \
+            .table("interest_rates").select("account_type").limit(1).execute()
+    except Exception as exc:
+        return HealthResponse(
+            status="degraded",
+            supabase_configured=True,
+            database="unreachable",
+            detail=str(exc)[:300],
+        )
+
+    return HealthResponse(status="ok", supabase_configured=True, database="reachable")
 
 
 @app.post("/assess-fraud", response_model=AssessFraudResponse)

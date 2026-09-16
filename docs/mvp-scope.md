@@ -38,7 +38,11 @@ See `decisions.md` for the full reasoning per item. Summary:
 
 ## Infrastructure gaps found during review (not scope decisions — bugs/config to fix)
 
-Tracked in `decisions.md` → "Known live issues": the Railway Python service URL scheme, the `place_account_hold` response-parsing crash, missing Supabase env vars on Railway, and the empty Pinecone index. The first two were fixed in this review; the latter two need a manual step in Railway/Pinecone's own dashboards (credential entry that shouldn't be done by an agent) — see the README's "Known Dependencies" section for exact next steps.
+Tracked in `decisions.md` → "Known live issues": the Railway Python service URL scheme, the `place_account_hold` response-parsing crash, missing Supabase env vars on Railway, and the empty Pinecone index. **All four are now resolved.** The Railway environment variables have been set and `/assess-fraud` returns real rules-engine scores against live data; the Pinecone index is seeded and `banking_policy_v2` is fed from Google Drive.
+
+The Railway one stayed open far longer than it should have because it was not *checkable*: `/health` returned `{"status": "ok"}` whether or not the service could reach the database, so the only symptom of a misconfigured deployment was every transfer being blocked — which looks exactly like fraud detection working. `/health` now reports credential presence and a live database round-trip, so the question "is the deployment configured?" has an answer that does not involve moving money.
+
+**Still open (Session 12):** five workflows expose unauthenticated public webhooks wired to live logic. They are inert — each declares `responseMode: responseNode` with no such node present, so n8n errors at the trigger before anything downstream runs — but they should be removed rather than left one missing node away from approving loans without authentication. See `decisions.md` → Session 12.
 
 ## Genuinely still not built
 
@@ -48,3 +52,5 @@ These were never in the capstone brief and remain deliberately absent:
 - **Real interbank settlement.** This bank settles instantly and internally against its own ledger; there are no external rails.
 - **Removing a holder while keeping an account open in a way that reallocates their share of holds or standing orders.** Removal is supported, but it does not attempt to divide anything — it is refused outright while the account is encumbered.
 - **Customer-initiated holder management by email.** `request_holder_addition`, `request_holder_removal` and `request_authority_change` are fully built, tested and reachable by RPC, and every *response* arrives by email via the JNT reference codes. What is not wired is an inbound email intent to *start* one; today an operator initiates it. This is the one place where a built capability has no customer-facing front door.
+- **Sending money to a person by name.** Deliberately absent, and distinct from sending to an **email address**, which is supported. A name is not unique and proves nothing; an email address is the exact thing this bank authenticates on. Where an address resolves to more than one account we ask which, rather than choosing.
+- **Ops commands beyond crediting an account and deciding a pending loan.** The operations mailbox is understood as staff, not as a customer, but its free-text command vocabulary is deliberately two commands wide. Anything else is answered with the list of supported forms and changes nothing. A broader natural-language parser on an input that moves real money would be guessing.

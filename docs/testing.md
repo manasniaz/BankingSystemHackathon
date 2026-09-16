@@ -17,7 +17,7 @@ The full set of real-email test scenarios (balance inquiry, transfer, fraud bloc
 
 Using n8n's execute/test tooling directly against the production Cloud instance (not just reading the workflow JSON):
 
-- `WF-03 Fraud Hold` end-to-end call to the Railway Python service — **initially failed** (`Invalid URL`, missing `https://` scheme on `PYTHON_SERVICE_URL`), fixed, re-tested, now reaches the service. The Railway service itself currently rejects requests (`Supabase credentials missing`) — see `decisions.md` for the exact fix needed on Railway's side.
+- `WF-03 Fraud Hold` end-to-end call to the Railway Python service — **initially failed** (`Invalid URL`, missing `https://` scheme on `PYTHON_SERVICE_URL`), fixed, re-tested, now reaches the service. The Railway service itself rejected requests at the time (`Supabase credentials missing`). *Resolved as of Session 12: the environment variables are set and `/assess-fraud` returns real scores against live data.*
 - `place_account_hold` RPC — a real test call surfaced a genuine crash (bare-`UUID`-return not parsed as JSON by n8n); fixed and republished.
 - `WF-04 RAG Support` end-to-end call to Pinecone — confirmed the retrieval tool returns HTTP 404 (index doesn't exist yet), and confirmed the fallback path correctly degrades to a "needs human" draft instead of crashing or hallucinating.
 - Accidental side effect of the first fraud test: a real fraud hold + account freeze was placed on `TEST-ALICE-001`. This was released (`release_account_hold`) as part of the same review — the account is back to `active`.
@@ -36,4 +36,10 @@ Verified live via direct RPC calls and n8n executions (not just read from code):
 
 ## Not yet covered by any automated test
 
-Standing-order weekend/holiday behavior (not built — see `decisions.md`), joint-account majority-vote governance (not built), guardian/minor account permissions (not built). These are scope decisions, not test gaps — there's nothing to test because the feature doesn't exist. See `mvp-scope.md`.
+All three items previously listed here — standing-order weekend/holiday behaviour, joint-account majority governance, and guardian/minor permissions — were built in Session 11 and verified live by direct RPC. They are no longer scope gaps. What remains uncovered is different in kind:
+
+**The Gmail trigger path has no automated test at all.** Every branch of WF-00 is reachable only by a real inbound email, which cannot be invoked from the available tooling. Every underlying RPC is exercised, and the graph is audited statically for orphans, dangling targets, unwired switch outputs, switch rule/connection alignment and bad `$('Node')` references — but the wiring *between* a node and the RPC it calls is checked by neither.
+
+Session 12 is the case for taking this seriously rather than listing it as a formality. `Execute WF-01 Transfer Sub-Workflow` was passing the fraud service's HTTP response to the transfer sub-workflow instead of the transfer, so **every transfer in the bank failed**, for weeks, while `initiate_transfer()` passed every RPC-level test that was thrown at it. The defect lived entirely in the gap that neither the RPC tests nor the static audit covers, and it surfaced to the customer as a polite, well-formatted, plausible rejection email.
+
+The static audit was extended after each incident and now catches the switch-fallback hazard automatically. It cannot catch a missing input mapping, because an Execute Sub-workflow node with no mapping is structurally valid — it just forwards the wrong items. A test that posts a synthetic email into the Gmail intake and asserts on the resulting execution is the missing piece.

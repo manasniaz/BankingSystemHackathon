@@ -150,7 +150,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\nconst holdersRecords = $input.all();\n\nconst authorizedAccounts = [];\nholdersRecords.forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\nconst bodyLower = (meta.bodyText || '').toLowerCase();\nconst subjectLower = (meta.subject || '').toLowerCase();\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\n// IMPORTANT: the customer's message BODY is the source of truth for intent.\n// The subject line is only consulted as a fallback when the body itself gives\n// no usable signal at all (e.g. a one-line email, or a stale/forwarded/reused\n// subject that doesn't reflect what's actually being asked this time).\nfunction classify(text) {\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add|make)\\b/.test(text);\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud(ulent)?|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize|without (my )?permission|used my card)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much|statement|summary)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') {\n  intent = classify(subjectLower);\n}\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nfunction extractAmountMinor(text) {\n  // MONEY UNITS: the database stores BIGINT minor units (paisa).\n  // Customers write major units (\"7000\" = 7000.00). Always multiply by 100.\n  // Never guess based on magnitude.\n  const amtMatch = String(text || '').match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\n// Body-first for money too: a number left over in a stale or reused subject\n// line must never outrank the amount the customer wrote in THIS message.\nfunction amountFromMessage() {\n  return extractAmountMinor(meta.bodyText) || extractAmountMinor(rawText);\n}\n\n// Customers write loan terms in days, weeks, months or years. This product is\n// monthly-installment based (1-60 months), so anything shorter rounds UP to\n// the nearest whole month instead of silently falling back to a year.\nfunction parseTerm(text) {\n  const m = String(text || '').match(/(\\d+)\\s*(day|days|week|weeks|month|months|year|years)/i);\n  if (!m) return null;\n  const n = parseInt(m[1], 10);\n  const unit = m[2].toLowerCase();\n  let t;\n  if (unit.indexOf('year') === 0) t = n * 12;\n  else if (unit.indexOf('month') === 0) t = n;\n  else if (unit.indexOf('week') === 0) t = Math.ceil(n / 4);\n  else t = Math.ceil(n / 30);\n  return Math.min(60, Math.max(1, t));\n}\n\nfunction termMonthsFromMessage() {\n  const fromBody = parseTerm(meta.bodyText);\n  if (fromBody !== null) return fromBody;\n  const fromRaw = parseTerm(rawText);\n  if (fromRaw !== null) return fromRaw;\n  return 12;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = (meta.bodyText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = amountFromMessage();\n\n  let destAccount = null;\n  const acctMatch = (meta.bodyText || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = (meta.bodyText || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  loanDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountFromMessage(),\n    term_months: termMonthsFromMessage()\n  };\n} else if (intent === 'DEPOSIT') {\n  depositDetails = {\n    account_id: primaryAcc ? primaryAcc.account_id : null,\n    amount: amountFromMessage()\n  };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
+        "jsCode": "// The bank's own addresses are defined once, in Detect Reference Reply.\nconst refCtx = $('Detect Reference Reply').item.json;\nconst BANK_EMAIL = refCtx.bankEmail;\nconst OPS_TEAM_EMAIL = refCtx.opsTeamEmail;\n\nconst meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\n\nconst authorizedAccounts = [];\n$input.all().forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\n// Only what the customer actually typed this time counts.\nconst ownText = ownTextOf(meta.bodyText);\nconst bodyLower = ownText.toLowerCase();\nconst subjectLower = String(meta.subject || '').toLowerCase();\n\n// A question about something that already happened is not an instruction to do\n// it again. \"Why was my transfer rejected?\" used to be read as a fresh transfer\n// request, so the customer asking why their payment failed was told -- as the\n// answer -- that their payment had failed. Questions go to support.\nfunction isQuestionAboutPastAction(text) {\n  const asking = /\\b(why|what|how come|what happened|happened to|explain|reason|update|status|is there a problem|didn'?t i|has (it|this) been)\\b/.test(text);\n  const pastOutcome = /\\b(was|were|been|did ?n[o']t|could ?n[o']t|was ?n[o']t|failed|fail|rejected|declined|blocked|refused|denied|bounced|not go through|didn'?t work|still pending|still waiting|no response|not received|hasn'?t arrived)\\b/.test(text);\n  const instructing = /\\b(please\\s+(send|transfer|pay|deposit|credit)|^\\s*(send|transfer|pay)\\b|i (want|need|would like) to (send|transfer|pay|borrow|deposit))/.test(text);\n  return asking && pastOutcome && !instructing;\n}\n\nfunction classify(text) {\n  if (isQuestionAboutPastAction(text)) return 'POLICY_RAG';\n\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add|make)\\b/.test(text);\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsClosure = /\\b(close|closing|delete|deleting|deactivate|terminate|cancel)\\b/.test(text) && /\\b(account)\\b/.test(text) && !/\\bloan\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud(ulent)?|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize|without (my )?permission|used my card)\\b/.test(text);\n\n  // Cancelling an application must be tested BEFORE applying for one, or\n  // \"cancel my loan application\" is read as \"apply for a loan\".\n  const wantsLoanCancel = /\\b(cancel|withdraw|revoke|retract|remove|take back|drop|rescind|call off|no longer want)\\b/.test(text)\n                       && /\\b(loan|borrow(ing)?|financing|application)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsStatement = /\\b(statement|transaction history|account history|list of transactions|activity)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsClosure) return 'ACCOUNT_CLOSURE';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoanCancel) return 'LOAN_CANCEL';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsStatement) return 'STATEMENT';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') intent = classify(subjectLower);\n\nfunction parseTerm(text) {\n  const m = String(text || '').match(/(\\d+)\\s*(day|days|week|weeks|month|months|year|years)/i);\n  if (!m) return null;\n  const n = parseInt(m[1], 10);\n  const unit = m[2].toLowerCase();\n  let t;\n  if (unit.indexOf('year') === 0) t = n * 12;\n  else if (unit.indexOf('month') === 0) t = n;\n  else if (unit.indexOf('week') === 0) t = Math.ceil(n / 4);\n  else t = Math.ceil(n / 30);\n  return Math.min(60, Math.max(1, t));\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active')\n                || authorizedAccounts.find(a => a.status === 'active') || null;\n\n// Details are derived for every message, not only the intent we settled on,\n// so the LLM fallback can change the label without having to re-derive any of\n// this. Two copies of the extraction logic is how they drift apart.\nconst amountMinor = amountMinorFrom(ownText) || amountMinorFrom(meta.subject);\nconst termMonths = parseTerm(ownText) || parseTerm(meta.subject) || 12;\nconst destination = accountNumberIn(ownText)\n                 || recipientEmailIn(ownText, meta.fromEmail, [BANK_EMAIL, OPS_TEAM_EMAIL]);\n\nconst transferDetails = {\n  source_account_id: primaryAcc ? primaryAcc.account_id : null,\n  destination_account: destination,\n  amount: amountMinor,\n  currency: primaryAcc ? primaryAcc.currency : 'PKR',\n  idempotency_key: 'gmail_' + meta.messageId\n};\n\n// A transfer with neither an amount nor a recipient is not a transfer request,\n// whatever words it used. Treat it as a question instead of replying with a\n// complaint about the missing account number.\nif (intent === 'TRANSFER' && !amountMinor && !destination) intent = 'POLICY_RAG';\n\nconst jointEmail = recipientEmailIn(ownText, meta.fromEmail, [BANK_EMAIL, OPS_TEAM_EMAIL]);\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = (String(meta.subject || '') + ' ' + ownText).toUpperCase()\n                    .match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    ownText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail: intent === 'JOINT_OPEN' ? jointEmail : null,\n    loanDetails: { account_id: primaryAcc ? primaryAcc.account_id : null,\n                   amount: amountMinor, term_months: termMonths },\n    depositDetails: { account_id: primaryAcc ? primaryAcc.account_id : null,\n                      amount: amountMinor }\n  }\n}];"
       },
       "id": "384b42dd-9313-4a0f-b573-d225d837e452",
       "name": "Classify Intent & Authorize Request",
@@ -452,6 +452,30 @@
               },
               "renameOutput": true,
               "outputKey": "Statement"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "intent-loan-cancel",
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "LOAN_CANCEL",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Loan Cancel"
             }
           ]
         },
@@ -654,7 +678,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const ctx = $('Classify Intent & Authorize Request').item.json;\nconst td = ctx.transferDetails || {};\nconst authorized = ctx.authorizedAccounts || [];\n\nconst source = authorized.find(a => a.account_id === td.source_account_id && a.status === 'active');\n\nif (!source) {\n  return [{ json: {\n    ok: false,\n    reason: 'You do not have an active account authorized for outgoing transfers.',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nif (source.holder_type === 'minor') {\n  return [{ json: {\n    ok: false,\n    reason: 'This account is a minor account with view-only access. A guardian must initiate transfers on your behalf.',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nif (!td.destination_account) {\n  return [{ json: {\n    ok: false,\n    reason: 'We could not identify the destination account. Please include the destination account number, for example: \"Send 5000 to account TEST-BOB-001\".',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nif (!td.amount || td.amount <= 0) {\n  return [{ json: {\n    ok: false,\n    reason: 'We could not identify a valid transfer amount. Please state the amount clearly.',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  source_account_id: source.account_id,\n  source_account_number: source.account_number,\n  source_currency: source.currency,\n  destination_lookup: td.destination_account,\n  amount: td.amount,\n  idempotency_key: td.idempotency_key,\n  initiated_by_profile_id: ctx.profile_id,\n  fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n} }];"
+        "jsCode": "const ctx = $('Classify Intent & Authorize Request').item.json;\nconst td = ctx.transferDetails || {};\nconst authorized = ctx.authorizedAccounts || [];\n\nconst source = authorized.find(a => a.account_id === td.source_account_id && a.status === 'active');\n\nif (!source) {\n  return [{ json: {\n    ok: false,\n    reason: 'You do not have an active account authorized for outgoing transfers.',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nif (source.holder_type === 'minor') {\n  return [{ json: {\n    ok: false,\n    reason: 'This account is a minor account with view-only access. A guardian must initiate transfers on your behalf.',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nif (!td.destination_account) {\n  return [{ json: {\n    ok: false,\n    reason: 'We could not identify who to send it to. Name the destination either way: an account number (\"send 5000 to ACC-1234567890\") or their registered email address (\"send 5000 to someone@example.com\").',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nif (!td.amount || td.amount <= 0) {\n  return [{ json: {\n    ok: false,\n    reason: 'We could not identify a valid transfer amount. Please state the amount clearly.',\n    fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n  } }];\n}\n\nreturn [{ json: {\n  ok: true,\n  source_account_id: source.account_id,\n  source_account_number: source.account_number,\n  source_currency: source.currency,\n  destination_lookup: td.destination_account,\n  amount: td.amount,\n  idempotency_key: td.idempotency_key,\n  initiated_by_profile_id: ctx.profile_id,\n  fromEmail: ctx.fromEmail, subject: ctx.subject, full_name: ctx.full_name\n} }];"
       },
       "id": "99f0330c-0f38-4ed0-a100-598cb9498329",
       "name": "Resolve Transfer Target & Authorize",
@@ -727,30 +751,6 @@
     },
     {
       "parameters": {
-        "operation": "getAll",
-        "tableId": "accounts",
-        "limit": 1,
-        "filterType": "string",
-        "filterString": "=account_number=eq.{{ $json.destination_lookup }}&select=id,account_number,currency,status"
-      },
-      "id": "6ff25766-1e27-4cf1-9b97-0039b50757bd",
-      "name": "Look Up Destination Account",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [
-        3648,
-        1264
-      ],
-      "alwaysOutputData": true,
-      "credentials": {
-        "supabaseApi": {
-          "id": "tJhpbtV5Vin0bmon",
-          "name": "Supabase account"
-        }
-      }
-    },
-    {
-      "parameters": {
         "conditions": {
           "combinator": "and",
           "conditions": [
@@ -788,7 +788,7 @@
         "sendTo": "={{ $('Resolve Transfer Target & Authorize').item.json.fromEmail }}",
         "subject": "=RE: {{ $('Resolve Transfer Target & Authorize').item.json.subject }} - Destination Not Found",
         "emailType": "text",
-        "message": "=Hello {{ $('Resolve Transfer Target & Authorize').item.json.full_name }},\n\nWe could not find the destination account you specified: {{ $('Resolve Transfer Target & Authorize').item.json.destination_lookup }}\n\nPlease check the account number and try again. No funds have been moved.\n\nDigital Bank Transfer Service",
+        "message": "=Hello {{ $('Resolve Transfer Target & Authorize').item.json.full_name }},\n\nWe could not send your transfer.\n\n{{ (function(){\n  const r = $json.reason;\n  const looked = $('Resolve Transfer Target & Authorize').item.json.destination_lookup;\n  if (r === 'ambiguous_recipient') return 'That person holds more than one account with us (' + ($json.candidates || []).join(', ') + '), so we cannot tell which one you meant. Please reply with the account number.';\n  if (r === 'no_such_recipient') return 'We have no active account registered to ' + looked + '.';\n  if (r === 'staff_address') return 'That address belongs to the bank, not to a customer account.';\n  return 'We could not find the destination account you specified: ' + looked;\n})() }}\n\nYou can name the destination either way: an account number (\"send 5000 to ACC-1234567890\") or the recipient's registered email address (\"send 5000 to someone@example.com\").\n\nNo funds have been moved from your account.\n\nDigital Bank Transfer Service",
         "options": {
           "appendAttribution": false
         }
@@ -2431,7 +2431,7 @@
         "promptType": "define",
         "text": "={{ 'Subject: ' + $json.subject + '\\nBody: ' + $json.bodyText }}",
         "options": {
-          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, ACCOUNT_CLOSURE, STATEMENT, DISPUTE, LOAN_APPLICATION, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- ACCOUNT_CLOSURE: wanting an existing account closed, deleted, cancelled, deactivated or terminated. If they are ASKING what the closure rules are rather than requesting it, that is POLICY_RAG. If they want their money moved somewhere first, that is TRANSFER.\n- STATEMENT: wanting a statement, transaction history, or a list of past activity on their account. BALANCE is just the current number; STATEMENT is the history.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card, I do not recognise this payment.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own current balance. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
+          "systemMessage": "You are an intent classifier for a bank's email system. Read the email body (authoritative) and subject below, then respond with EXACTLY ONE WORD: one of JOINT_OPEN, OPEN_ACCOUNT, ACCOUNT_CLOSURE, STATEMENT, DISPUTE, LOAN_APPLICATION, LOAN_CANCEL, DEPOSIT, STANDING_ORDER, TRANSFER, BALANCE, POLICY_RAG, UNAUTHORIZED_ACCESS, UNKNOWN.\n\nKey distinctions:\n- OPEN_ACCOUNT: any wording for wanting a new personal account (create, open, start, set up, sign up, register, become a customer).\n- JOINT_OPEN: wanting to open a shared/joint account with someone else.\n- ACCOUNT_CLOSURE: wanting an existing account closed, deleted, cancelled, deactivated or terminated. If they are ASKING what the closure rules are rather than requesting it, that is POLICY_RAG. If they want their money moved somewhere first, that is TRANSFER.\n- STATEMENT: wanting a statement, transaction history, or a list of past activity on their account. BALANCE is just the current number; STATEMENT is the history.\n- DISPUTE: the sender's OWN transaction, card, or account was used fraudulently/without their permission -- they want it investigated or frozen. Trigger words: unauthorized transaction, fraud, stolen, didn't make this charge, someone used my card, I do not recognise this payment.\n- UNAUTHORIZED_ACCESS: the sender is asking for details (balance, transactions) about an account that belongs to someone ELSE, not their own.\n- LOAN_APPLICATION: wants to borrow money. LOAN_CANCEL: wants an existing loan APPLICATION cancelled, withdrawn or revoked before it is decided -- this is about taking back a request, not about asking for one. DEPOSIT: wants to add/deposit money into their own account. STANDING_ORDER: a recurring/scheduled payment. TRANSFER: wants to send money to someone. BALANCE: wants their own current balance. POLICY_RAG: asking about fees, limits, rules, policies. UNKNOWN: genuinely none of the above (e.g. spam, small talk, an unrelated topic).\n\nDo not explain. Do not add punctuation. Output only the single label word."
         }
       },
       "id": "5a40c985-2eb2-4b17-b131-75309b5b291b",
@@ -2445,7 +2445,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const original = $('Classify Intent & Authorize Request').item.json;\nconst validLabels = ['JOINT_OPEN','OPEN_ACCOUNT','DISPUTE','LOAN_APPLICATION','DEPOSIT','STANDING_ORDER','TRANSFER','BALANCE','POLICY_RAG','UNAUTHORIZED_ACCESS','UNKNOWN'];\n\nlet intent = String(($json.output || $json.text || '')).trim().toUpperCase().replace(/[^A-Z_]/g, '');\nif (!validLabels.includes(intent)) intent = 'UNKNOWN';\n\nconst meta = { fromEmail: original.fromEmail, subject: original.subject, bodyText: original.bodyText, messageId: original.messageId };\nconst authorizedAccounts = original.authorizedAccounts || [];\nconst rawText = (meta.subject || '') + ' ' + (meta.bodyText || '');\n\nfunction extractAmountMinor(text) {\n  const amtMatch = String(text || '').match(/(\\d[\\d,]*(?:\\.\\d{1,2})?)/);\n  if (amtMatch) {\n    const major = parseFloat(amtMatch[1].replace(/,/g, ''));\n    if (!isNaN(major) && major > 0) {\n      return Math.round(major * 100);\n    }\n  }\n  return 0;\n}\n\n// Kept deliberately identical to the regex path in Classify Intent &\n// Authorize Request -- a customer must get the same amount and term whether\n// keyword matching or the LLM fallback decided their intent.\nfunction amountFromMessage() {\n  return extractAmountMinor(meta.bodyText) || extractAmountMinor(rawText);\n}\n\nfunction parseTerm(text) {\n  const m = String(text || '').match(/(\\d+)\\s*(day|days|week|weeks|month|months|year|years)/i);\n  if (!m) return null;\n  const n = parseInt(m[1], 10);\n  const unit = m[2].toLowerCase();\n  let t;\n  if (unit.indexOf('year') === 0) t = n * 12;\n  else if (unit.indexOf('month') === 0) t = n;\n  else if (unit.indexOf('week') === 0) t = Math.ceil(n / 4);\n  else t = Math.ceil(n / 30);\n  return Math.min(60, Math.max(1, t));\n}\n\nfunction termMonthsFromMessage() {\n  const fromBody = parseTerm(meta.bodyText);\n  if (fromBody !== null) return fromBody;\n  const fromRaw = parseTerm(rawText);\n  if (fromRaw !== null) return fromRaw;\n  return 12;\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active') || authorizedAccounts.find(a => a.status === 'active') || null;\n\nlet transferDetails = null;\nlet jointInviteeEmail = null;\nlet loanDetails = null;\nlet depositDetails = null;\n\nif (intent === 'JOINT_OPEN') {\n  const emailMatch = (meta.bodyText || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/);\n  jointInviteeEmail = emailMatch ? emailMatch[0].toLowerCase() : null;\n} else if (intent === 'TRANSFER') {\n  const amountMinor = amountFromMessage();\n  let destAccount = null;\n  const acctMatch = (meta.bodyText || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (acctMatch) {\n    destAccount = acctMatch[1].toUpperCase();\n  } else {\n    const uuidMatch = (meta.bodyText || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n    if (uuidMatch) destAccount = uuidMatch[0];\n  }\n  transferDetails = {\n    source_account_id: primaryAcc ? primaryAcc.account_id : null,\n    destination_account: destAccount,\n    amount: amountMinor,\n    currency: primaryAcc ? primaryAcc.currency : 'PKR',\n    idempotency_key: 'gmail_' + meta.messageId\n  };\n} else if (intent === 'LOAN_APPLICATION') {\n  loanDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountFromMessage(), term_months: termMonthsFromMessage() };\n} else if (intent === 'DEPOSIT') {\n  depositDetails = { account_id: primaryAcc ? primaryAcc.account_id : null, amount: amountFromMessage() };\n}\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = rawText.toUpperCase().match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    messageId: meta.messageId,\n    profile_id: original.profile_id,\n    full_name: original.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail,\n    loanDetails,\n    depositDetails\n  }\n}];"
+        "jsCode": "const original = $('Classify Intent & Authorize Request').item.json;\nconst valid = ['JOINT_OPEN','OPEN_ACCOUNT','ACCOUNT_CLOSURE','STATEMENT','DISPUTE',\n               'LOAN_APPLICATION','LOAN_CANCEL','DEPOSIT','STANDING_ORDER','TRANSFER',\n               'BALANCE','POLICY_RAG','UNAUTHORIZED_ACCESS','UNKNOWN'];\n\nlet intent = String($json.output || $json.text || '').trim().toUpperCase().replace(/[^A-Z_]/g, '');\nif (valid.indexOf(intent) === -1) intent = 'UNKNOWN';\n\n// A security verdict is not a classification opinion. If the keyword pass found\n// the sender naming an account they do not hold, that stands whatever the model\n// thought the email was about.\nif (original.intent === 'UNAUTHORIZED_ACCESS') intent = 'UNAUTHORIZED_ACCESS';\n\n// Same for a transfer with nothing to act on: the model calling it a TRANSFER\n// does not conjure an amount or a recipient out of the text.\nif (intent === 'TRANSFER') {\n  const td = original.transferDetails || {};\n  if (!td.amount && !td.destination_account) intent = 'POLICY_RAG';\n}\n\nreturn [{ json: Object.assign({}, original, { intent }) }];"
       },
       "id": "14199e74-d0c7-4b41-9fcb-61903441cc91",
       "name": "Finalize LLM-Classified Intent",
@@ -2562,7 +2562,7 @@
         -200
       ],
       "parameters": {
-        "jsCode": "// Every email the bank sends that needs a human answer carries a short reference\n// code. When that human replies, the code comes back to us and tells us exactly\n// which pending decision this is. Four families:\n//   OPS-xxxxxxxx  a bank decision, only the ops mailbox may answer it\n//   JNT-xxxxxxxx  a joint-account action, only a holder (or, for an invitation\n//                 to join, the invited person) may answer it - checked in SQL\n//   MIN-xxxxxxxx  a guardian consent, only the named guardian may answer it\n//   DSP-xxxxxxxx  a dispute, co-holders adding their side of the story\n\nconst OPS_TEAM_EMAIL = 'ops-team@yourbank.example';\n\nconst meta = $input.first().json;\nconst from = String(meta.fromEmail || '').toLowerCase().trim();\nconst subject = String(meta.subject || '');\nconst body = String(meta.bodyText || '');\n\nconst passthrough = Object.assign({}, meta, {\n  isRefReply: false, refKind: null, refCode: null,\n  decision: null, opsNote: null, opsTeamEmail: OPS_TEAM_EMAIL\n});\n\nconst refMatch = (subject + '\\n' + body).match(/\\b(OPS|JNT|MIN|DSP)-([A-Za-z0-9]{8})\\b/);\nif (!refMatch) {\n  return [{ json: passthrough }];\n}\n\nconst prefix = refMatch[1].toUpperCase();\nconst refCode = prefix + '-' + refMatch[2].toUpperCase();\nlet refKind = prefix === 'OPS' ? 'ops'\n            : prefix === 'JNT' ? 'joint'\n            : prefix === 'MIN' ? 'minor'\n            : 'dispute';\n\n// An OPS code is only actionable when it comes from the ops mailbox itself.\n// Anyone else quoting the code back at us is just a normal customer email.\nif (refKind === 'ops' && from !== OPS_TEAM_EMAIL) {\n  return [{ json: passthrough }];\n}\n\n// Gmail quotes the original message in a reply, so the decision must be read from\n// what the person actually typed -- everything above the first quote marker.\nlet ownText = body;\nconst cutMarkers = [/^\\s*On .+wrote:\\s*$/m, /^\\s*>/m, /^-{2,}\\s*Original Message/im, /^\\s*_{10,}\\s*$/m, /^\\s*={3,}BANKING-OPS-ACTION/m];\nfor (const marker of cutMarkers) {\n  const hit = ownText.match(marker);\n  if (hit && hit.index !== undefined && hit.index >= 0) ownText = ownText.slice(0, hit.index);\n}\n\n// An explicit NOTE: line lets ops attach a rejection reason or an edited answer,\n// and lets a co-holder attach their side of a dispute.\nlet opsNote = null;\nconst noteMatch = ownText.match(/^\\s*NOTE\\s*:\\s*([\\s\\S]+)$/im);\nif (noteMatch) {\n  opsNote = noteMatch[1].trim() || null;\n  ownText = ownText.slice(0, noteMatch.index);\n}\n\nconst decisionText = (subject + '\\n' + ownText);\nconst saysApprove = /\\b(approve|approved|approves|accept|accepted|authorise|authorised|authorize|authorized|yes|agreed?|confirm|confirmed)\\b/i.test(decisionText);\nconst saysReject  = /\\b(reject|rejected|rejects|decline|declined|deny|denied|refuse|refused|no|disagreed?)\\b/i.test(decisionText);\n\nlet decision = null;\nif (saysApprove && !saysReject) decision = 'approve';\nelse if (saysReject && !saysApprove) decision = 'reject';\n\n// Both words, or neither: we must NOT guess. Passing \"not approve\" through as a\n// rejection would silently kill a pending request because someone replied\n// \"no problem, thanks\". Route to a clarification email instead and leave the\n// request untouched and still pending.\nif (decision === null) {\n  refKind = 'unclear';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  isRefReply: true, refKind, refCode, decision, opsNote,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
+        "jsCode": "// Every email the bank sends that needs a human answer carries a short reference\n// code. When that human replies, the code comes back to us and tells us exactly\n// which pending decision this is. Four families:\n//   OPS-xxxxxxxx  a bank decision, only the ops mailbox may answer it\n//   JNT-xxxxxxxx  a joint-account action, only a holder (or, for an invitation\n//                 to join, the invited person) may answer it - checked in SQL\n//   MIN-xxxxxxxx  a guardian consent, only the named guardian may answer it\n//   DSP-xxxxxxxx  a dispute, co-holders adding their side of the story\n\nconst OPS_TEAM_EMAIL = 'ops-team@yourbank.example';\nconst BANK_EMAIL = 'bank@yourbank.example';\n\nconst meta = $input.first().json;\nconst from = String(meta.fromEmail || '').toLowerCase().trim();\nconst subject = String(meta.subject || '');\nconst body = String(meta.bodyText || '');\n\nconst passthrough = Object.assign({}, meta, {\n  isRefReply: false, refKind: null, refCode: null,\n  decision: null, opsNote: null,\n  opsTeamEmail: OPS_TEAM_EMAIL, bankEmail: BANK_EMAIL\n});\n\nconst refMatch = (subject + '\\n' + body).match(/\\b(OPS|JNT|MIN|DSP)-([A-Za-z0-9]{8})\\b/);\nif (!refMatch) {\n  return [{ json: passthrough }];\n}\n\nconst prefix = refMatch[1].toUpperCase();\nconst refCode = prefix + '-' + refMatch[2].toUpperCase();\nlet refKind = prefix === 'OPS' ? 'ops'\n            : prefix === 'JNT' ? 'joint'\n            : prefix === 'MIN' ? 'minor'\n            : 'dispute';\n\n// An OPS code is only actionable when it comes from the ops mailbox itself.\n// Anyone else quoting the code back at us is just a normal customer email.\nif (refKind === 'ops' && from !== OPS_TEAM_EMAIL) {\n  return [{ json: passthrough }];\n}\n\n// Gmail quotes the original message in a reply, so the decision must be read from\n// what the person actually typed -- everything above the first quote marker.\nlet ownText = body;\nconst cutMarkers = [/-{2,}\\s*Original Message/i, /\\bOn\\s+\\w.{0,160}?\\bwrote:/i, /^\\s*>/m, /_{10,}/, /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i, /={3,}BANKING-OPS-ACTION/];\nlet cutAt = ownText.length;\nfor (const marker of cutMarkers) {\n  const hit = ownText.match(marker);\n  if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cutAt) cutAt = hit.index;\n}\nownText = ownText.slice(0, cutAt);\n\n// An explicit NOTE: line lets ops attach a rejection reason or an edited answer,\n// and lets a co-holder attach their side of a dispute.\nlet opsNote = null;\nconst noteMatch = ownText.match(/^\\s*NOTE\\s*:\\s*([\\s\\S]+)$/im);\nif (noteMatch) {\n  opsNote = noteMatch[1].trim() || null;\n  ownText = ownText.slice(0, noteMatch.index);\n}\n\nconst decisionText = (subject + '\\n' + ownText);\nconst saysApprove = /\\b(approve|approved|approves|accept|accepted|authorise|authorised|authorize|authorized|yes|agreed?|confirm|confirmed)\\b/i.test(decisionText);\nconst saysReject  = /\\b(reject|rejected|rejects|decline|declined|deny|denied|refuse|refused|no|disagreed?)\\b/i.test(decisionText);\n\nlet decision = null;\nif (saysApprove && !saysReject) decision = 'approve';\nelse if (saysReject && !saysApprove) decision = 'reject';\n\n// Both words, or neither: we must NOT guess. Passing \"not approve\" through as a\n// rejection would silently kill a pending request because someone replied\n// \"no problem, thanks\". Route to a clarification email instead and leave the\n// request untouched and still pending.\nif (decision === null) {\n  refKind = 'unclear';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  isRefReply: true, refKind, refCode, decision, opsNote,\n  opsTeamEmail: OPS_TEAM_EMAIL, bankEmail: BANK_EMAIL\n}) }];"
       }
     },
     {
@@ -5330,6 +5330,652 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "s12c-2329048898",
+      "name": "Build Transfer Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4688,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// WF-01 is a sub-workflow: it sees the ITEMS handed to it, not this\n// workflow's history. The previous node here is the fraud check, whose output\n// is {approved, risk_score, fraud_assessment_id} -- none of the transfer.\n// Every field WF-01 validates has to be rebuilt explicitly.\nconst t = $('Resolve Transfer Target & Authorize').item.json;\nconst dest = $('Look Up Destination Account').item.json;\nconst fraud = $input.first().json;\n\nreturn [{ json: {\n  source_account_id: t.source_account_id,\n  destination_account_id: dest.id || dest.account_id,\n  amount: t.amount,\n  currency: t.source_currency,\n  idempotency_key: t.idempotency_key,\n  initiated_by_profile_id: t.initiated_by_profile_id,\n  fraud_assessment_id: fraud.fraud_assessment_id\n} }];"
+      },
+      "notes": "Rebuilds the transfer payload for the sub-workflow. Without this WF-01 receives the fraud service's response instead of the transfer."
+    },
+    {
+      "id": "s12-resolve_-52266164",
+      "name": "Look Up Destination Account",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3648,
+        1264
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/resolve_destination_account",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_lookup\": {{ JSON.stringify($json.destination_lookup) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      },
+      "notes": "Accepts an account number or an email address. Reports ambiguity rather than picking a recipient when someone holds two accounts."
+    },
+    {
+      "id": "s12i-8058133257",
+      "name": "Is Ops Team Sender?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        1680
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ops-sender",
+              "leftValue": "={{ ($json.fromEmail || '').toLowerCase() }}",
+              "rightValue": "={{ ($json.opsTeamEmail || '').toLowerCase() }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "Staff mail never enters the customer path. Without this the operations mailbox is looked up as a customer, and anything it says is read as a customer instruction."
+    },
+    {
+      "id": "s12c-1636443475",
+      "name": "Parse Ops Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        1680
+      ],
+      "parameters": {
+        "jsCode": "// A free-text instruction from the operations mailbox. This is NOT a reply to\n// a reference code -- those are handled upstream. It is ops reaching in to\n// move something that is stuck.\n//\n// Two commands, both deliberately narrow. Anything else is bounced back rather\n// than guessed at, because guessing here moves real money.\nconst meta = $json;\nconst OPS_TEAM_EMAIL = meta.opsTeamEmail;\nconst BANK_EMAIL = meta.bankEmail;\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\nconst text = ownTextOf(meta.bodyText);\nconst lower = (String(meta.subject || '') + '\\n' + text).toLowerCase();\n\nlet note = null;\nconst noteMatch = text.match(/\\bNOTE\\s*:\\s*([\\s\\S]+)$/i);\nif (noteMatch) note = (noteMatch[1] || '').trim() || null;\n\nconst target = accountNumberIn(text)\n            || recipientEmailIn(text, OPS_TEAM_EMAIL, [BANK_EMAIL]);\n\nconst mentionsLoan = /\\bloan\\b/.test(lower);\nconst approves = /\\b(approve|approved|authorise|authorize|grant)\\b/.test(lower);\nconst rejects = /\\b(reject|rejected|decline|declined|deny|denied|refuse|refused)\\b/.test(lower);\n\n// \"credit\"/\"give\"/\"pay\" -- the bank handing money to a customer outright.\nconst credits = /\\b(credit|give|grant|issue|pay out|payout|disburse|reimburse|refund|compensate|award)\\b/.test(lower);\n\nlet command = 'unclear';\nlet decision = null;\nconst amount = amountMinorFrom(text);\n\nif (mentionsLoan && (approves || rejects) && !(approves && rejects)) {\n  command = 'loan_decision';\n  decision = approves ? 'approve' : 'reject';\n} else if (credits && amount > 0 && target) {\n  command = 'credit';\n}\n\n// Never act on half an instruction.\nif (command === 'credit' && (!target || amount <= 0)) command = 'unclear';\nif (command === 'loan_decision' && !target) command = 'unclear';\n\nlet why = null;\nif (command === 'unclear') {\n  if (!target) why = 'no account number or customer email address in the message';\n  else if (mentionsLoan && approves && rejects) why = 'the message says both approve and reject';\n  else if (credits && amount <= 0) why = 'no amount to credit';\n  else why = 'it did not match a supported operations command';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  opsCommand: command, opsTarget: target, opsAmount: amount,\n  opsDecision: decision, opsNote: note, opsUnclearReason: why,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
+      }
+    },
+    {
+      "id": "s12-route-ops-cmd",
+      "name": "Route Ops Command",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1664,
+        1680
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ops-credit",
+                    "leftValue": "={{ $json.opsCommand }}",
+                    "rightValue": "credit",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Credit"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ops-loan",
+                    "leftValue": "={{ $json.opsCommand }}",
+                    "rightValue": "loan_decision",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Loan Decision"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Not Understood"
+        }
+      }
+    },
+    {
+      "id": "s12-operator-35646235",
+      "name": "Operator Credit Account",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1936,
+        1568
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/operator_credit_account",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_operator_email\": {{ JSON.stringify($json.fromEmail) }},\n  \"p_target\": {{ JSON.stringify($json.opsTarget) }},\n  \"p_amount\": {{ $json.opsAmount }},\n  \"p_reason\": {{ JSON.stringify($json.opsNote || \"Credit issued by the bank operations team\") }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "s12-operator-4274938",
+      "name": "Operator Decide Loan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1936,
+        1792
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/operator_decide_loan",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_operator_email\": {{ JSON.stringify($json.fromEmail) }},\n  \"p_target\": {{ JSON.stringify($json.opsTarget) }},\n  \"p_decision\": {{ JSON.stringify($json.opsDecision) }},\n  \"p_reason\": {{ JSON.stringify($json.opsNote) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "s12i-7327212686",
+      "name": "Ops Credit Applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2208,
+        1568
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12i-4294308333",
+      "name": "Ops Loan Decision Applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2208,
+        1792
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12g-1749349933",
+      "name": "Email Customer - Bank Credit",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        1488
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.holder_email }}",
+        "subject": "=Digital Bank - Rs {{ ($json.amount / 100).toFixed(2) }} credited to your account",
+        "emailType": "text",
+        "message": "=Hello,\n\nThe bank has credited your account.\n\nAmount: Rs {{ ($json.amount / 100).toFixed(2) }}\nAccount: {{ $json.account_number }}\nNew balance: Rs {{ ($json.new_balance / 100).toFixed(2) }}\n{{ $json.reason ? ('Reason: ' + $json.reason + '\\n') : '' }}\nThis is a credit, not a loan. There is nothing to repay, no interest, and no repayment schedule has been set up. The money is yours to use or transfer straight away.\n\nDigital Bank Operations",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-8966313212",
+      "name": "Confirm Credit To Ops",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        1648
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
+        "subject": "=Credit applied - {{ $json.account_number }} - Rs {{ ($json.amount / 100).toFixed(2) }}",
+        "emailType": "text",
+        "message": "=Credit applied.\n\nAccount: {{ $json.account_number }}\nHolder: {{ $json.holder_email }}\nAmount: Rs {{ ($json.amount / 100).toFixed(2) }}\nNew balance: Rs {{ ($json.new_balance / 100).toFixed(2) }}\nTransaction: {{ $json.transaction_id }}\n\nBooked against TREASURY-MAIN by double entry. The customer has been notified.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-3010556193",
+      "name": "Email Ops - Credit Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2480,
+        1808
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
+        "subject": "=Credit NOT applied - {{ $('Parse Ops Command').item.json.opsTarget }}",
+        "emailType": "text",
+        "message": "=The credit could not be applied and no money has moved.\n\nTarget: {{ $('Parse Ops Command').item.json.opsTarget }}\nAmount: Rs {{ ($('Parse Ops Command').item.json.opsAmount / 100).toFixed(2) }}\nReason: {{ $json.error || $json.message || 'unknown error' }}\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-7277588446",
+      "name": "Email Customer - Loan Decision (Ops)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2752,
+        1712
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.holder_email }}",
+        "subject": "=Digital Bank - your loan application",
+        "emailType": "text",
+        "message": "=Hello,\n\n{{ $json.decision === 'approve'\n   ? 'Your loan application has been approved and the funds have been disbursed to your account.'\n   : 'We are unable to approve your loan application at this time.' }}\n\nAccount: {{ $json.account_number }}\n{{ $json.decision === 'reject' ? ('Reason: ' + $json.reason + '\\n') : '' }}\n{{ $json.decision === 'reject' ? 'You are welcome to apply again later. Your account is otherwise unaffected.' : '' }}\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-3424044952",
+      "name": "Confirm Loan Decision To Ops",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3024,
+        1712
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
+        "subject": "=Loan {{ $json.decision }}d - {{ $json.account_number }}",
+        "emailType": "text",
+        "message": "=Loan decision recorded.\n\nAccount: {{ $json.account_number }}\nCustomer: {{ $json.holder_email }}\nDecision: {{ $json.decision }}\nLoan: {{ $json.loan_id }}\n\nThe customer has been notified.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-1485570920",
+      "name": "Email Ops - Loan Decision Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2752,
+        1888
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
+        "subject": "=Loan decision NOT applied - {{ $('Parse Ops Command').item.json.opsTarget }}",
+        "emailType": "text",
+        "message": "=That loan decision could not be applied and nothing has changed.\n\nTarget: {{ $('Parse Ops Command').item.json.opsTarget }}\nDecision: {{ $('Parse Ops Command').item.json.opsDecision }}\nReason: {{ $json.error || $json.message || 'unknown error' }}\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-2511902482",
+      "name": "Email Ops - Command Not Understood",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1936,
+        2016
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.opsTeamEmail }}",
+        "subject": "=Operations command not understood",
+        "emailType": "text",
+        "message": "=We could not act on that message, and nothing has changed.\n\nWhy: {{ $json.opsUnclearReason }}\n\nSupported operations commands:\n\n  Credit a customer (a grant -- not a loan, nothing to repay):\n    credit 5000 to someone@example.com\n    credit 5000 to ACC-1234567890\n    NOTE: goodwill payment for the delayed transfer\n\n  Decide a loan application that is awaiting review:\n    reject loan for ACC-1234567890\n    approve loan for someone@example.com\n    NOTE: insufficient account history\n\nTo approve or reject a specific pending request, reply to the email carrying its OPS- reference code with the single word APPROVE or REJECT.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12-withdraw-14723774",
+      "name": "Withdraw Loan Application",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3088,
+        2160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/withdraw_loan_application",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_profile_id\": {{ JSON.stringify($json.profile_id) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "s12i-2345985510",
+      "name": "Loan Withdrawn?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        2160
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12g-3861075900",
+      "name": "Send Loan Withdrawn Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3632,
+        2080
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }} - Loan application withdrawn",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\nYour loan application has been withdrawn at your request. It will not be reviewed and no money will be disbursed.\n\nAmount applied for: Rs {{ ($json.principal_amount / 100).toFixed(2) }}\nAccount: {{ $json.account_number }}\n\nNothing is owed, and this does not affect your account in any other way. You are welcome to apply again whenever you like.\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-9375239544",
+      "name": "Send Loan Withdraw Problem Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3632,
+        2272
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Classify Intent & Authorize Request').item.json.fromEmail }}",
+        "subject": "=RE: {{ $('Classify Intent & Authorize Request').item.json.subject }} - Loan application",
+        "emailType": "text",
+        "message": "=Hello {{ $('Classify Intent & Authorize Request').item.json.full_name }},\n\n{{ $json.error || 'We could not withdraw a loan application for you.' }}\n\nIf you think this is wrong, reply to this email and a member of our team will look at it.\n\nDigital Bank Lending Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12g-8995079458",
+      "name": "Alert Ops - Loan Application Withdrawn",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3904,
+        2080
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Reference Reply').item.json.opsTeamEmail }}",
+        "subject": "=Loan application withdrawn - {{ $json.account_number }}",
+        "emailType": "text",
+        "message": "=A customer has withdrawn their own loan application before it was decided.\n\nAccount: {{ $json.account_number }}\nCustomer: {{ $('Classify Intent & Authorize Request').item.json.fromEmail }}\nAmount: Rs {{ ($json.principal_amount / 100).toFixed(2) }}\nLoan: {{ $json.loan_id }}\n{{ $json.cancelled_ops_ref ? ('Cancelled pending approval: ' + $json.cancelled_ops_ref + ' -- no decision needed.') : 'No pending approval was open for it.' }}\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -5477,6 +6123,13 @@
         ],
         [
           {
+            "node": "Withdraw Loan Application",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Send General Inquiry Response Email",
             "type": "main",
             "index": 0
@@ -5524,17 +6177,6 @@
         ]
       ]
     },
-    "Look Up Destination Account": {
-      "main": [
-        [
-          {
-            "node": "Destination Account Exists?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Destination Account Exists?": {
       "main": [
         [
@@ -5568,7 +6210,7 @@
       "main": [
         [
           {
-            "node": "Execute WF-01 Transfer Sub-Workflow",
+            "node": "Build Transfer Payload",
             "type": "main",
             "index": 0
           }
@@ -6163,7 +6805,7 @@
         ],
         [
           {
-            "node": "Check Pending Joint Invitation",
+            "node": "Is Ops Team Sender?",
             "type": "main",
             "index": 0
           }
@@ -7025,6 +7667,202 @@
           }
         ]
       ]
+    },
+    "Build Transfer Payload": {
+      "main": [
+        [
+          {
+            "node": "Execute WF-01 Transfer Sub-Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Look Up Destination Account": {
+      "main": [
+        [
+          {
+            "node": "Destination Account Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Ops Team Sender?": {
+      "main": [
+        [
+          {
+            "node": "Parse Ops Command",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Pending Joint Invitation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ops Command": {
+      "main": [
+        [
+          {
+            "node": "Route Ops Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Ops Command": {
+      "main": [
+        [
+          {
+            "node": "Operator Credit Account",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Operator Decide Loan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Ops - Command Not Understood",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operator Credit Account": {
+      "main": [
+        [
+          {
+            "node": "Ops Credit Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Operator Decide Loan": {
+      "main": [
+        [
+          {
+            "node": "Ops Loan Decision Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ops Credit Applied?": {
+      "main": [
+        [
+          {
+            "node": "Email Customer - Bank Credit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Ops - Credit Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Customer - Bank Credit": {
+      "main": [
+        [
+          {
+            "node": "Confirm Credit To Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ops Loan Decision Applied?": {
+      "main": [
+        [
+          {
+            "node": "Email Customer - Loan Decision (Ops)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Ops - Loan Decision Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Customer - Loan Decision (Ops)": {
+      "main": [
+        [
+          {
+            "node": "Confirm Loan Decision To Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Withdraw Loan Application": {
+      "main": [
+        [
+          {
+            "node": "Loan Withdrawn?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loan Withdrawn?": {
+      "main": [
+        [
+          {
+            "node": "Send Loan Withdrawn Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Loan Withdraw Problem Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Loan Withdrawn Email": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops - Loan Application Withdrawn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -7032,7 +7870,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "3f682f0f-5534-435e-9d2b-f721c7a5ace8",
+  "versionId": "s12a0001-0000-4000-8000-000000000012",
   "meta": {
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },

@@ -13,10 +13,44 @@ class TestFraudService(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
-    def test_health_endpoint(self):
+    @patch("main.create_client")
+    @patch("main.SUPABASE_SERVICE_ROLE_KEY", "test-key")
+    @patch("main.SUPABASE_URL", "https://example.supabase.co")
+    def test_health_reports_ok_when_database_reachable(self, mock_create):
+        mock_create.return_value = MagicMock()
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertTrue(body["supabase_configured"])
+        self.assertEqual(body["database"], "reachable")
+
+    @patch("main.SUPABASE_SERVICE_ROLE_KEY", None)
+    @patch("main.SUPABASE_URL", "https://example.supabase.co")
+    def test_health_names_the_missing_variable(self):
+        # The whole point of the endpoint: an unconfigured deployment must not
+        # be able to report itself healthy, and must say which variable is gone.
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "degraded")
+        self.assertFalse(body["supabase_configured"])
+        self.assertEqual(body["database"], "not_configured")
+        self.assertIn("SUPABASE_SERVICE_ROLE_KEY", body["detail"])
+        self.assertNotIn("SUPABASE_URL", body["detail"])
+
+    @patch("main.create_client")
+    @patch("main.SUPABASE_SERVICE_ROLE_KEY", "test-key")
+    @patch("main.SUPABASE_URL", "https://example.supabase.co")
+    def test_health_reports_unreachable_database(self, mock_create):
+        mock_create.side_effect = RuntimeError("connection refused")
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "degraded")
+        self.assertTrue(body["supabase_configured"])
+        self.assertEqual(body["database"], "unreachable")
+        self.assertIn("connection refused", body["detail"])
 
     @patch("main.get_supabase_client")
     def test_assess_fraud_frozen_account(self, mock_get_client):

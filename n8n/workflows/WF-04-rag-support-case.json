@@ -157,7 +157,7 @@
         },
         "topK": 4,
         "options": {
-          "pineconeNamespace": "banking_policy"
+          "pineconeNamespace": "banking_policy_v2"
         }
       },
       "id": "310feb0b-fe70-4fc5-9235-f9bc41d8ec2d",

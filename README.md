@@ -664,13 +664,24 @@ Forward any automated notification (a Google security alert, a newsletter, anyth
 
 1. **Email Intake Mechanism**: Intake relies on n8n's Gmail Trigger polling for unread messages.
 2. **Fraud Microservice Reachability**: n8n must be able to reach `PYTHON_SERVICE_URL`. If the microservice is offline, `WF-03` defaults to a defensive safety hold.
-3. **Pinecone Indexing**: RAG policy retrieval requires pre-populated vector embeddings in Pinecone (`banking-policy-index`, namespace `banking_policy`) — see [`docs/policies.md`](docs/policies.md) for the source documents and [`n8n/workflows/WF-09-seed-policy-documents.json`](n8n/workflows/WF-09-seed-policy-documents.json) for the seeding workflow.
+3. **Pinecone Indexing**: RAG policy retrieval requires pre-populated vector embeddings in Pinecone (`banking-policy-index`). The live namespace is **`banking_policy_v2`**, fed from a Google Drive folder by WF-09's Drive sync — see [`docs/policy-documents/`](docs/policy-documents/) for the six source documents and how to edit them. The older `banking_policy` namespace (nineteen snippets held as string literals in WF-09) is kept only as a rollback target.
+4. **Bank staff addresses**: after applying migration 027, the operations mailbox must be registered in `bank_staff` and set in WF-00's `Detect Reference Reply` node. Real addresses are not committed to this repository; the workflow JSON here carries placeholders. See [`docs/database.md`](docs/database.md) → migration 027.
 
-### ✅ No open action items
+### Verifying a deployment
 
-The Pinecone index (`banking-policy-index`, 3072 dimensions, matching Google's current `gemini-embedding-001` embedding model) has been seeded with all 15 PKR policy documents, including privacy policy, terms and conditions, deposits, and loans. RAG support is verified live and grounded end-to-end, and now genuinely answers a confident, well-grounded question directly instead of always waiting on human approval (verified with a live test after catching and fixing two CHECK-constraint bugs that had silently broken the direct-send path). Accounts can now actually be funded — via self-service deposit or loan — instead of every account being permanently stuck at Rs 0.00.
+`GET /health` on the Python service reports whether it can actually work, not just whether the process is up:
 
-Full history of what was checked, fixed, and resolved: [`docs/decisions.md`](docs/decisions.md), particularly Sessions 2 through 7.
+```json
+{"status": "ok", "supabase_configured": true, "database": "reachable"}
+```
+
+A `status` of `degraded` names the missing environment variable or the database error. It deliberately still returns HTTP 200 — a failing health check makes Railway restart the container, and restarting does not supply a missing environment variable.
+
+### Open action items
+
+One, and it is not urgent: five workflows expose unauthenticated public webhooks (`/webhook/transfer`, `/assess-fraud`, `/support-case`, `/approve-draft`, `/approve-loan`) wired to live logic. All five are inert — each declares `responseMode: responseNode` with no Respond to Webhook node present, so n8n errors at the trigger before anything downstream runs. Nothing is exploitable, but they should be deleted rather than left one missing node away from approving loans without authentication, in a bank whose only intended channel is email. WF-05 is reachable only through two of them and is superseded by the `OPS-` email flow in WF-00.
+
+Full history of what was checked, fixed, and resolved: [`docs/decisions.md`](docs/decisions.md).
 
 ---
 

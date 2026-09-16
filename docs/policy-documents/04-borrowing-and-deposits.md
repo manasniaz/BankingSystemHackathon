@@ -74,11 +74,29 @@ You do not need to do anything to repay a loan except keep enough in the account
 - **A minor account holder.** A guardian must apply in their own name.
 - **A closed or frozen account.**
 
+### Cancelling an application you have already sent
+
+If you applied for a loan and changed your mind, email us and say so — *"please cancel my loan application"*. While the application is still awaiting a decision we withdraw it immediately, no questions asked. Nothing is owed, your account is unaffected, and you can apply again whenever you like. Any pending review with our credit team is cancelled at the same time, so nobody is asked to decide something you no longer want.
+
+**Once a loan has been approved and the money paid out, there is nothing left to cancel.** The application is finished; what exists now is a debt. Cancelling the paperwork would not cancel the obligation, so we tell you plainly that the balance is still owed and is being collected by standing order. This is the one case where we will not do what you asked, and we say why rather than quietly failing.
+
+This also unblocks closing an account: an account cannot be closed while a loan application is awaiting a decision, so if you want the account gone, cancel the application first and then ask us to close it.
+
 ### If a loan is declined
 
 You are told, and you are told why. You are welcome to apply again later. A declined loan does not affect your account in any other way.
 
-## 4. Interest on deposits
+## 4. Credits from the bank
+
+Occasionally the bank itself puts money into a customer's account — to put right a mistake we made, to settle a dispute in your favour, or as a goodwill payment. Our operations team issues these directly.
+
+**A credit is not a loan.** There is no interest, no term, no repayment schedule and nothing to repay. The money is yours the moment it arrives and you can spend or transfer it like any other balance. The email you receive says so explicitly, because the difference matters and "the bank sent me money" should never leave you wondering whether you now owe something.
+
+A credit is paid out of `TREASURY-MAIN` by the same double-entry mechanism as everything else, appears on your statement as a normal credit with the reason attached, and is included in the nightly reconciliation.
+
+Only bank staff can issue one. A customer asking us to credit their own account is a deposit request, and deposit caps apply.
+
+## 5. Interest on deposits
 
 | Account type | Annual rate |
 |---|---|
@@ -97,6 +115,6 @@ Interest on a savings account is calculated monthly at one twelfth of the annual
 
 If your balance is small enough that a month of interest rounds to less than one paisa, nothing is credited that month.
 
-## 5. Overdrafts
+## 6. Overdrafts
 
 Digital Bank does not offer overdrafts on any account type. Every transfer is validated against the available balance before execution, and a transaction that would take the balance below zero is rejected rather than allowed to create a negative balance.

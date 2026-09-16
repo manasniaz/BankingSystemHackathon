@@ -14,7 +14,22 @@ Email us with the amount and the destination account number, for example:
 
 We take the amount from the **body** of your email, not the subject line. Subject lines get reused and forwarded and are a bad source of truth for how much money to move. Amounts are read as whole rupees — "5000" means Rs 5,000.00.
 
-We need the destination **account number**. We cannot send money to a person's name or email address, because we have no safe way to resolve a name to an account. If you don't include an account number, we reply asking for one rather than guessing.
+We only read what *you* typed. The quoted original underneath a reply is ignored entirely, so an account number or address that appears in the text you are replying to is never mistaken for your instruction.
+
+### Naming the recipient
+
+You can name the destination two ways:
+
+| | Example |
+|---|---|
+| **Account number** | `send 5000 to ACC-1234567890` |
+| **Registered email address** | `send 5000 to someone@example.com` |
+
+An email address works because it is exactly what we authenticate on — your address is your identity here, and so is theirs. A **name** is not, and never will be: names are not unique and prove nothing.
+
+If the address you give holds **more than one** account with us, we do not pick one. We reply listing the account numbers and ask which you meant.
+
+If we cannot identify a recipient at all, we say so and move no money.
 
 **A transfer is only ever made from an account you hold.** If you reference an account that isn't yours, the request is refused with no information disclosed about that account — we will not confirm or deny that it exists.
 

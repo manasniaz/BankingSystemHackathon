@@ -63,6 +63,7 @@ We deliberately do not send everything to a human. Routing everything to a perso
 - Scheduled standing order payments
 - Producing and sending your account statement
 - Paying monthly interest on a savings account
+- Withdrawing a loan application of your own that has not been decided yet
 - Any policy question we can answer confidently from these documents
 
 ### Always involves a person at the bank
@@ -72,6 +73,7 @@ We deliberately do not send everything to a human. Routing everything to a perso
 - Releasing a fraud hold — always, without exception
 - Investigating and deciding a dispute
 - **Reversing a completed transfer** — there is no automated path to this at all
+- Crediting money to a customer account outside of a deposit or a loan (see the Borrowing policy)
 
 In these cases nothing is sent to you until a member of our operations team has reviewed it, and you are told a review is underway rather than being handed a guess.
 
