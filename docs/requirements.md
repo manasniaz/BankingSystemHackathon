@@ -10,7 +10,7 @@
 | Fraud | Every transfer request is scored by a deterministic rules engine before funds move; a service outage fails safe (hold), never fails open (approve). | `python/main.py`, WF-03 `Validate & Evaluate Fraud Decision` |
 | Standing orders | Recurring transfers execute on a business-day-aware schedule, retry on transient failure up to a bounded count, and notify both ops **and the customer** on permanent failure. | `execute_standing_order()`, WF-02 |
 | Reconciliation | The ledger is checked nightly for internal consistency (debits=credits, balances=ledger sums), with an alert on any discrepancy. | `run_reconciliation()`, WF-06 |
-| Support | Policy questions get a RAG-grounded draft. A grounded, confident (≥0.7) answer is sent to the customer automatically; anything the model isn't confidently grounded on requires explicit human approval before it reaches a customer. | WF-04, WF-00 (`OPS-` approval) |
+| Support | Policy questions get a RAG-grounded draft. An answer that is grounded, confident (≥0.7) and flagged as needing no human is sent to the customer automatically; anything else requires explicit human approval before it reaches a customer. A question our documents cover only in part is answered for the part we publish, not escalated whole. | WF-04, WF-00 (`OPS-` approval) |
 | Auditability | Every financial mutation and every fraud/support decision writes an immutable audit record. | `audit_log` (append-only via trigger), `write_audit_log()` |
 
 ## Non-functional
@@ -44,7 +44,7 @@
 | Interest | Savings accrue monthly from the treasury through double-entry, idempotently, for fully elapsed months only. | `accrue_monthly_interest()` (`022`), WF-06 |
 | Statements | Reconstructable from the ledger alone, and never sent if the arithmetic does not close. | `generate_account_statement()` (`022`/`024`), Python `/generate-statement` |
 | Disputes | Unilateral to raise, co-holder input collected, always resolved by a human. | `raise_dispute()`, `add_dispute_holder_input()`, `resolve_dispute()` (`023`) |
-| RAG safety | An answer claiming to be grounded with no citations is forced to human review regardless of its stated confidence. Past cases are never indexed. | WF-04 `Parse Agent Draft Output` |
+| RAG safety | An answer claiming to be grounded with no citations is forced to human review regardless of its stated confidence. An escalated answer keeps its draft and citations so the operator can act on it. Past cases are never indexed. | WF-04 `Parse Agent Draft Output`, `Hold Draft for Review` |
 | Fraud patterns | Known typologies are retrieved semantically to inform the human reviewing a freeze, and never feed the deterministic score. | `fraud_patterns` namespace, WF-03 `Search Fraud Patterns` |
 
 ## Explicitly not a requirement for this submission

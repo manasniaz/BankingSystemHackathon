@@ -108,7 +108,7 @@
         "text": "={{ ($('Extract Case ID').item.json.isReturning ? 'Note: this person has contacted us within the last 10 minutes -- treat them as a returning visitor in tone, but still answer strictly from retrieved policy documents.\\n\\n' : '') + $json.inquiry }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) Call the Policy Knowledge Base tool AT MOST TWICE total, with two different phrasings of the question. Do not call it a third time under any circumstances.\n(4) If both searches return no results or nothing relevant, STOP SEARCHING IMMEDIATELY and give a final answer with GROUNDED: false, CONFIDENCE: 0, NEEDS_HUMAN: true, and a DRAFT explaining our policy documents don't cover this yet.\n(5) If retrieved policy does not clearly cover the question, set GROUNDED: false, NEEDS_HUMAN: true.\n\nYOUR FINAL ANSWER MUST BE PLAIN TEXT IN EXACTLY THIS FORMAT, WITH EACH LABEL AT THE START OF ITS OWN LINE. DO NOT USE JSON. DO NOT ADD ANY TEXT BEFORE 'DRAFT:' OR AFTER 'NEEDS_HUMAN:'. DO NOT WRAP IN CODE FENCES:\n\nDRAFT: <the exact reply text to send the customer, in full sentences>\nGROUNDED: true or false\nCONFIDENCE: a number between 0 and 1\nCITATIONS: comma-separated doc_id values, or NONE\nNEEDS_HUMAN: true or false"
+          "systemMessage": "You are a professional banking customer support drafting assistant. Use the Policy Knowledge Base tool to find official policy information before answering.\n\nSTRICT RULES:\n(1) Only state policies, fees, wire limits, overdraft rules, or procedures that appear explicitly in retrieved Policy Knowledge Base documents.\n(2) NEVER invent banking rules or hallucinate limits.\n(3) Call the Policy Knowledge Base tool AT MOST TWICE total, with two different phrasings of the question. Do not call it a third time under any circumstances.\n(4) If both searches return nothing relevant, STOP SEARCHING IMMEDIATELY and answer with GROUNDED: false, CONFIDENCE: 0, CITATIONS: NONE, NEEDS_HUMAN: true, and a DRAFT saying our policy documents do not cover this yet.\n\nANSWER EVERY PART YOU CAN:\nA question often has several parts, and our documents may cover some of them and not others. That is normal and it is NOT a failure. Answer the parts our documents do cover, quoting the figures exactly as published, and then say plainly that the remaining parts are not addressed in our published policy. Never withhold a figure we do publish because some other part of the question is unpublished. If you are asked where a figure is published, name the policy document and the section heading it appears under in the retrieved text.\n\nTHIS BANK RUNS ENTIRELY BY EMAIL:\nThere is no app, no website, no online banking login, no branch and no phone line. Never tell a customer to use an app, log in, visit a branch, or call us, and never invent a support address or phone number. The only way for a customer to do anything is to reply to our email. Say \"reply to this email\" when you need them to act.\nDo not speculate about what other banks or intermediaries charge or do. If our documents do not address it, say only that our published policy does not address it.\n\nWRITING THE DRAFT:\nThe draft is sent as a plain-text email. Do NOT use Markdown: no asterisks for bold, no underscores, no backticks, no headings, no tables, no bullet characters. Write figures inline in ordinary sentences, for example: the fee is Rs 1,500 per outgoing wire. Never put an internal document ID such as doc_payments_and_transfers in the DRAFT -- name the policy in plain words instead, for example \"our Payments, Transfers and Fees policy\". Document IDs belong only on the CITATIONS line.\n\nTHE THREE FLAGS MEAN DIFFERENT THINGS. READ THIS CAREFULLY:\n\nGROUNDED is about YOUR DRAFT, not about the question. Set GROUNDED: true when every factual statement in your DRAFT came from a retrieved document. Writing \"our published policy does not address X\" is itself a grounded statement: it is a fact about our documents, which you have just searched. Set GROUNDED: false only when your DRAFT asserts a policy fact you could not find in a retrieved document, or when you retrieved nothing and your DRAFT therefore contains no policy facts at all. A question that is only partly covered by our documents still produces a GROUNDED: true draft.\n\nNEEDS_HUMAN is about whether your DRAFT is ready to send as it stands. Set NEEDS_HUMAN: true only when the customer needs something you cannot give: their own account data or balances, a decision or an exception, a complaint handled, or an unpublished fact that is the entire substance of their question. If your DRAFT answers what our policy covers and is honest about what it does not, set NEEDS_HUMAN: false. It is ready to send.\n\nCONFIDENCE is how sure you are that the DRAFT is accurate and correctly sourced.\n\nYOUR FINAL ANSWER MUST BE PLAIN TEXT IN EXACTLY THIS FORMAT, WITH EACH LABEL AT THE START OF ITS OWN LINE. DO NOT USE JSON. DO NOT ADD ANY TEXT BEFORE 'DRAFT:' OR AFTER 'NEEDS_HUMAN:'. DO NOT WRAP IN CODE FENCES:\n\nDRAFT: <the exact reply text to send the customer, in full sentences>\nGROUNDED: true or false\nCONFIDENCE: a number between 0 and 1\nCITATIONS: comma-separated doc_id values, or NONE\nNEEDS_HUMAN: true or false"
         }
       },
       "id": "a342f61b-67eb-4d07-841f-b2164cd0a2b4",
@@ -223,13 +223,23 @@
                 "type": "number",
                 "operation": "gte"
               }
+            },
+            {
+              "id": "not-needs-human",
+              "leftValue": "={{ $json.output.needs_human }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
             }
           ]
         },
         "options": {}
       },
       "id": "c39f768c-46de-4c99-83e3-f410caae59f8",
-      "name": "Grounded & Confident? (>= 0.7)",
+      "name": "Sendable? (grounded, >= 0.7, no human needed)",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -286,13 +296,13 @@
               "id": "fallback-draft",
               "name": "groq_draft",
               "type": "string",
-              "value": "=Thank you for contacting Digital Bank. We searched our official policy documents but could not find a clear, confirmed answer to your specific question. Rather than guess, we're routing this to a specialist who will review your question and send you an accurate, verified answer shortly."
+              "value": "={{ ($json.output.citations && $json.output.citations.length) ? $json.output.draft : \"Thank you for contacting Digital Bank. We searched our official policy documents but could not find a clear, confirmed answer to your specific question. Rather than guess, we're routing this to a specialist who will review your question and send you an accurate, verified answer shortly.\" }}"
             },
             {
               "id": "citations",
               "name": "citations",
               "type": "array",
-              "value": "=[]"
+              "value": "={{ $json.output.citations || [] }}"
             },
             {
               "id": "confidence",
@@ -311,7 +321,7 @@
         "options": {}
       },
       "id": "027204be-da38-4cf5-a38d-4b44e045ea23",
-      "name": "Insufficient Policy Fallback Draft",
+      "name": "Hold Draft for Review",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
@@ -330,7 +340,7 @@
             },
             {
               "fieldId": "rag_doc_ids",
-              "fieldValue": "={{ JSON.stringify($json.citations) }}"
+              "fieldValue": "={{ $json.citations || [] }}"
             },
             {
               "fieldId": "confidence_score",
@@ -605,7 +615,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ p_request_type: 'support_draft', p_target_id: $('Save Support Case Draft in Supabase').item.json.id, p_subject: 'Policy answer needs review: ' + ($('Validate Support Request Payload').item.json.params.subject || 'customer enquiry'), p_summary: 'The assistant could not ground this answer confidently, so it has not been sent. Confidence ' + $('Save Support Case Draft in Supabase').item.json.confidence_score + '.', p_payload: { support_case_id: $('Extract Case ID').item.json.case_id, confidence_score: $('Save Support Case Draft in Supabase').item.json.confidence_score, inquiry: $('Validate Support Request Payload').item.json.params.inquiry }, p_requested_for_email: $('Validate Support Request Payload').item.json.params.customer_email }) }}",
+        "jsonBody": "={{ JSON.stringify({ p_request_type: 'support_draft', p_target_id: $('Save Support Case Draft in Supabase').item.json.id, p_subject: 'Policy answer needs review: ' + ($('Validate Support Request Payload').item.json.params.subject || 'customer enquiry'), p_summary: 'A drafted policy answer is waiting to be sent. Confidence ' + $('Save Support Case Draft in Supabase').item.json.confidence_score + '.', p_payload: { support_case_id: $('Extract Case ID').item.json.case_id, confidence_score: $('Save Support Case Draft in Supabase').item.json.confidence_score, inquiry: $('Validate Support Request Payload').item.json.params.inquiry }, p_requested_for_email: $('Validate Support Request Payload').item.json.params.customer_email }) }}",
         "options": {
           "response": {
             "response": {
@@ -634,7 +644,7 @@
         "sendTo": "ops-team@yourbank.example",
         "subject": "=[{{ $json.ref_code }}] Policy answer needs review",
         "emailType": "text",
-        "message": "=A customer asked a policy question the assistant could not answer confidently from our policy documents, so nothing has been sent to them.\n\nCustomer: {{ $('Validate Support Request Payload').item.json.params.customer_email }}\nSubject: {{ $('Validate Support Request Payload').item.json.params.subject }}\nCase reference: {{ $('Extract Case ID').item.json.case_id }}\nConfidence: {{ $('Save Support Case Draft in Supabase').item.json.confidence_score }}\n\nTHEIR QUESTION\n{{ $('Validate Support Request Payload').item.json.params.inquiry }}\n\nDRAFT ANSWER (not sent)\n{{ $('Save Support Case Draft in Supabase').item.json.groq_draft }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nAPPROVE sends the draft above to the customer as it stands. To send something different, reply APPROVE and add a line starting with NOTE: followed by the wording you want sent instead - that text replaces the draft. REJECT closes the case without emailing the customer.\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ref_code }}\nTYPE: support_draft\n========================",
+        "message": "=A customer asked a policy question. The assistant's draft is below. Nothing has been sent to them yet - it needs your decision first.\n\nCustomer: {{ $('Validate Support Request Payload').item.json.params.customer_email }}\nSubject: {{ $('Validate Support Request Payload').item.json.params.subject }}\nCase reference: {{ $('Extract Case ID').item.json.case_id }}\nConfidence: {{ $('Save Support Case Draft in Supabase').item.json.confidence_score }}\nSources: {{ $('Save Support Case Draft in Supabase').item.json.rag_doc_ids && String($('Save Support Case Draft in Supabase').item.json.rag_doc_ids).replace(/[\\[\\]\"]/g, '') || 'none - nothing relevant was retrieved' }}\n\nTHEIR QUESTION\n{{ $('Validate Support Request Payload').item.json.params.inquiry }}\n\nDRAFT ANSWER (not sent)\n{{ $('Save Support Case Draft in Supabase').item.json.groq_draft }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE\nor\n    REJECT\n\nAPPROVE sends the draft above to the customer as it stands. To send something different, reply APPROVE and add a line starting with NOTE: followed by the wording you want sent instead - that text replaces the draft. REJECT closes the case without emailing the customer.\n\nKeep the reference {{ $json.ref_code }} in the reply - it is already in the subject line, so a normal reply works. Your reply must contain APPROVE or REJECT but not both. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ref_code }}\nTYPE: support_draft\n========================",
         "options": {
           "appendAttribution": false
         }
@@ -767,36 +777,7 @@
         ]
       ]
     },
-    "Grounded & Confident? (>= 0.7)": {
-      "main": [
-        [
-          {
-            "node": "Format Grounded Draft",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Insufficient Policy Fallback Draft",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Format Grounded Draft": {
-      "main": [
-        [
-          {
-            "node": "Save Support Case Draft in Supabase",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Insufficient Policy Fallback Draft": {
       "main": [
         [
           {
@@ -906,7 +887,36 @@
       "main": [
         [
           {
-            "node": "Grounded & Confident? (>= 0.7)",
+            "node": "Sendable? (grounded, >= 0.7, no human needed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sendable? (grounded, >= 0.7, no human needed)": {
+      "main": [
+        [
+          {
+            "node": "Format Grounded Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Hold Draft for Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hold Draft for Review": {
+      "main": [
+        [
+          {
+            "node": "Save Support Case Draft in Supabase",
             "type": "main",
             "index": 0
           }

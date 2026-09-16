@@ -8,7 +8,7 @@ The full operator manual (credentials, import/activation order, real Gmail test 
 | WF-01 Transfer | Sub-workflow + webhook (`/webhook/transfer`) | Validates the payload (no fallback defaults — a missing field is a rejected request), calls `execute_transfer()`, returns success/failure. |
 | WF-02 Standing Orders | Schedule (hourly) | Finds due orders, calls `execute_standing_order()`, retries up to 3 times, alerts ops on permanent failure. **Was broken on every run until 2026-09-15** — see Session 5 below. |
 | WF-03 Fraud Hold | Sub-workflow + webhook (`/webhook/assess-fraud`) | Calls the Python fraud microservice, places a full-account freeze via `place_account_hold()` on high risk, alerts ops. |
-| WF-04 RAG Support | Sub-workflow + webhook (`/webhook/support-case`) | LangChain agent (Groq + Pinecone + Gemini) drafts a grounded policy answer. Grounded + confident (≥0.7) → sent to the customer directly. Below that bar → falls to "needs human" and queues for WF-05. Designed in Session 5, but the direct-send path was silently broken by two CHECK-constraint violations until Session 7 caught and fixed it with a live test. |
+| WF-04 RAG Support | Sub-workflow + webhook (`/webhook/support-case`) | LangChain agent (Groq + Pinecone + Gemini) drafts a grounded policy answer. Grounded + confident (≥0.7) + no human needed → sent to the customer directly. Below that bar → queues for a human, carrying the draft and its citations. Designed in Session 5, but the direct-send path was silently broken by two CHECK-constraint violations until Session 7 caught and fixed it with a live test. |
 | WF-05 Human Approval | Webhook (`/webhook/approve-draft`, `/webhook/approve-loan`) | Two independent webhook triggers in one workflow. `/approve-draft` handles only the RAG cases WF-04 couldn't confidently answer. `/approve-loan` (new, Session 7) lets an operator approve/reject a loan WF-00 queued as `pending_review` (amounts over Rs 200,000), calling `approve_loan`/`reject_loan` and emailing the customer either way. |
 | WF-06 Reconciliation | Schedule (midnight UTC) | Calls `run_reconciliation()`, alerts ops on any ledger discrepancy. Also runs `promote_minors_to_adult()` on the same schedule. |
 | WF-08 Joint Invitation Expiry Sweep | Schedule (every minute) — **deactivated** | Superseded: was burning ~1,440 n8n executions/day regardless of need. Kept, deactivated, for optional temporary use during a live demo. The same logic now runs opportunistically inside WF-00 (see below) at zero standing cost. |
@@ -95,6 +95,10 @@ The live bank still answers from namespace `banking_policy` until `v2` is verifi
 
 WF-04's agent no longer uses a structured-output parser. The only Groq model available on this account fails that call intermittently, which was sending correct, fully-grounded answers to human review with `confidence: 0`. The agent now returns labeled plain text, parsed by `Parse Agent Draft Output`. Verified live: grounded, confidence 1.0, answer sent directly with no human step.
 
+**The send gate has three conditions, not two** (Session 12, fourth pass). `Sendable? (grounded, >= 0.7, no human needed)` requires `grounded && confidence >= 0.7 && !needs_human`. `needs_human` had been parsed since the plain-text rewrite and never read — harmless only while `grounded` was doing double duty as "is this sendable". Once `grounded` was narrowed to mean strictly "every claim in the draft came from a retrieved document", sendability needed its own condition, and a regression test showed why: a refund complaint drafts a perfectly grounded, 0.9-confidence reply, and under the two-condition gate it would have gone to the customer with no human ever seeing it.
+
+The false branch is `Hold Draft for Review`, which keeps the agent's draft and citations when it has any. It previously overwrote both with a canned "could not find an answer" sentence, which reached the operator with nothing to act on and wrote `rag_doc_ids: []` into `support_case_drafts` for cases where documents *had* been retrieved and cited.
+
 ### New and changed per workflow
 
 - **WF-00** (137 → 146 nodes).
@@ -141,7 +145,7 @@ Joins the existing `OPS-`, `JNT-` and `MIN-` families. An invited holder replyin
   - `Route by Intent` gained rule 11 (`STATEMENT`); its fallback moved to output 12. `Route Reference Kind` gained rule 3 (`Dispute Input`); its fallback moved to output 4.
 - **WF-02**. On a permanently failed standing order, every holder of the source account is now emailed directly — what failed, why, and what to do — with distinct wording when it was a loan repayment. Previously only ops was told.
 - **WF-03**. The ops alert now carries the three most similar known fraud typologies, retrieved semantically, each with its innocent explanations. Advisory only and clearly labelled as such: the freeze decision remains the deterministic rules engine.
-- **WF-04**. Citation guardrail — an answer claiming to be grounded with zero citations is forced to human review whatever confidence it reports. Retrieval bounded to `topK` 4.
+- **WF-04**. Citation guardrail — an answer claiming to be grounded with zero citations is forced to human review whatever confidence it reports. Retrieval bounded to `topK` 4. Neither that guard nor the threshold catches a *correctly cited* answer with an invented sentence attached, so the prompt also states the bank's constraints outright: email is the only channel (no app, website, branch or phone line), and no speculating about what other banks charge.
 - **WF-06**. Nightly run extended with `sweep_outstanding_debts()` and `accrue_monthly_interest()`, both idempotent.
 - **WF-09**. Third branch seeding ten fraud typologies into a separate `fraud_patterns` namespace.
 

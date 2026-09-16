@@ -85,10 +85,14 @@ See `decisions.md` → Session 7 for the full design, including a genesis-fundin
 
 Earlier in this project, *every* policy question — no matter how well-grounded — sat in a human-approval queue before the customer got anything but a "we're looking into it" receipt. That defeats the point of a public policy chatbot and doesn't reflect how a real support desk would work. The current design (see `decisions.md` → "Session 5"):
 
-- **Grounded and confident (≥ 0.7)**: the AI's answer is sent to the customer directly. No human in the loop.
-- **Not grounded, low-confidence, or an agent error**: queued for a human via the `OPS-` approval email in WF-00, and the customer gets a receipt saying a specialist will follow up — never a guess presented as fact.
+- **Grounded, confident (≥ 0.7), and needing no human**: the AI's answer is sent to the customer directly. No human in the loop.
+- **Not grounded, low-confidence, needing a human, or an agent error**: queued for a human via the `OPS-` approval email in WF-00, and the customer gets a receipt saying a specialist will follow up — never a guess presented as fact.
 
-This keeps the human approval gate for what it's actually for — genuinely ambiguous or unanswerable questions — instead of throttling every request through a person who isn't needed.
+The three conditions are separate on purpose, because they fail for different reasons. *Grounded* is about the draft's sourcing: every factual claim in it came from a retrieved document. *Confidence* is how sure the model is that it read those documents correctly. *Needs-human* is about whether the draft is safe to send at all — a question needing the customer's own account data, a decision, an exception, or a complaint handled is escalated no matter how well-sourced the policy half of the answer is.
+
+Collapsing those into one flag is what broke this gate once already: a question that was only *partly* covered by our documents was treated as unanswerable in full, and a correct, cited answer was discarded (`decisions.md` → "Session 12, fourth pass"). A question our documents cover in part now gets an answer to that part and a plain sentence about the rest.
+
+This keeps the human approval gate for what it's actually for — genuinely ambiguous or unanswerable questions, and anything touching a specific customer's money — instead of throttling every request through a person who isn't needed.
 
 ## Updating the seeded documents in Pinecone
 
