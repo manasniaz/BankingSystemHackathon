@@ -31,6 +31,14 @@ If the address you give holds **more than one** account with us, we do not pick 
 
 If we cannot identify a recipient at all, we say so and move no money.
 
+### Both sides are told
+
+When a transfer completes we email **you** and we email **the person who received it** — every holder, if the destination is a joint account. The sender is never emailed twice for moving money between two accounts they hold themselves.
+
+The arrival notice names the amount, the account it landed in, and the sender's name and account number. It does not include the sender's email address. If a recipient does not recognise the sender, replying to that notice opens a dispute.
+
+A transfer that did not complete is announced to nobody but you.
+
 **A transfer is only ever made from an account you hold.** If you reference an account that isn't yours, the request is refused with no information disclosed about that account — we will not confirm or deny that it exists.
 
 ## 2. What happens to a transfer

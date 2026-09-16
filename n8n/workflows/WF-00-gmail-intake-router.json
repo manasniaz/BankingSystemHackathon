@@ -150,7 +150,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// The bank's own addresses are defined once, in Detect Reference Reply.\nconst refCtx = $('Detect Reference Reply').item.json;\nconst BANK_EMAIL = refCtx.bankEmail;\nconst OPS_TEAM_EMAIL = refCtx.opsTeamEmail;\n\nconst meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\n\nconst authorizedAccounts = [];\n$input.all().forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\n// Only what the customer actually typed this time counts.\nconst ownText = ownTextOf(meta.bodyText);\nconst bodyLower = ownText.toLowerCase();\nconst subjectLower = String(meta.subject || '').toLowerCase();\n\n// A question about something that already happened is not an instruction to do\n// it again. \"Why was my transfer rejected?\" used to be read as a fresh transfer\n// request, so the customer asking why their payment failed was told -- as the\n// answer -- that their payment had failed. Questions go to support.\nfunction isQuestionAboutPastAction(text) {\n  const asking = /\\b(why|what|how come|what happened|happened to|explain|reason|update|status|is there a problem|didn'?t i|has (it|this) been)\\b/.test(text);\n  const pastOutcome = /\\b(was|were|been|did ?n[o']t|could ?n[o']t|was ?n[o']t|failed|fail|rejected|declined|blocked|refused|denied|bounced|not go through|didn'?t work|still pending|still waiting|no response|not received|hasn'?t arrived)\\b/.test(text);\n  const instructing = /\\b(please\\s+(send|transfer|pay|deposit|credit)|^\\s*(send|transfer|pay)\\b|i (want|need|would like) to (send|transfer|pay|borrow|deposit))/.test(text);\n  return asking && pastOutcome && !instructing;\n}\n\nfunction classify(text) {\n  if (isQuestionAboutPastAction(text)) return 'POLICY_RAG';\n\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add|make)\\b/.test(text);\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsClosure = /\\b(close|closing|delete|deleting|deactivate|terminate|cancel)\\b/.test(text) && /\\b(account)\\b/.test(text) && !/\\bloan\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud(ulent)?|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize|without (my )?permission|used my card)\\b/.test(text);\n\n  // Cancelling an application must be tested BEFORE applying for one, or\n  // \"cancel my loan application\" is read as \"apply for a loan\".\n  const wantsLoanCancel = /\\b(cancel|withdraw|revoke|retract|remove|take back|drop|rescind|call off|no longer want)\\b/.test(text)\n                       && /\\b(loan|borrow(ing)?|financing|application)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsStatement = /\\b(statement|transaction history|account history|list of transactions|activity)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  if (wantsJoint) return 'JOINT_OPEN';\n  if (wantsOpen) return 'OPEN_ACCOUNT';\n  if (wantsClosure) return 'ACCOUNT_CLOSURE';\n  if (wantsDispute) return 'DISPUTE';\n  if (wantsLoanCancel) return 'LOAN_CANCEL';\n  if (wantsLoan) return 'LOAN_APPLICATION';\n  if (wantsDeposit) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  if (wantsTransfer) return 'TRANSFER';\n  if (wantsStatement) return 'STATEMENT';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsPolicy) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') intent = classify(subjectLower);\n\nfunction parseTerm(text) {\n  const m = String(text || '').match(/(\\d+)\\s*(day|days|week|weeks|month|months|year|years)/i);\n  if (!m) return null;\n  const n = parseInt(m[1], 10);\n  const unit = m[2].toLowerCase();\n  let t;\n  if (unit.indexOf('year') === 0) t = n * 12;\n  else if (unit.indexOf('month') === 0) t = n;\n  else if (unit.indexOf('week') === 0) t = Math.ceil(n / 4);\n  else t = Math.ceil(n / 30);\n  return Math.min(60, Math.max(1, t));\n}\n\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active')\n                || authorizedAccounts.find(a => a.status === 'active') || null;\n\n// Details are derived for every message, not only the intent we settled on,\n// so the LLM fallback can change the label without having to re-derive any of\n// this. Two copies of the extraction logic is how they drift apart.\nconst amountMinor = amountMinorFrom(ownText) || amountMinorFrom(meta.subject);\nconst termMonths = parseTerm(ownText) || parseTerm(meta.subject) || 12;\nconst destination = accountNumberIn(ownText)\n                 || recipientEmailIn(ownText, meta.fromEmail, [BANK_EMAIL, OPS_TEAM_EMAIL]);\n\nconst transferDetails = {\n  source_account_id: primaryAcc ? primaryAcc.account_id : null,\n  destination_account: destination,\n  amount: amountMinor,\n  currency: primaryAcc ? primaryAcc.currency : 'PKR',\n  idempotency_key: 'gmail_' + meta.messageId\n};\n\n// A transfer with neither an amount nor a recipient is not a transfer request,\n// whatever words it used. Treat it as a question instead of replying with a\n// complaint about the missing account number.\nif (intent === 'TRANSFER' && !amountMinor && !destination) intent = 'POLICY_RAG';\n\nconst jointEmail = recipientEmailIn(ownText, meta.fromEmail, [BANK_EMAIL, OPS_TEAM_EMAIL]);\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = (String(meta.subject || '') + ' ' + ownText).toUpperCase()\n                    .match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    ownText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail: intent === 'JOINT_OPEN' ? jointEmail : null,\n    loanDetails: { account_id: primaryAcc ? primaryAcc.account_id : null,\n                   amount: amountMinor, term_months: termMonths },\n    depositDetails: { account_id: primaryAcc ? primaryAcc.account_id : null,\n                      amount: amountMinor }\n  }\n}];"
+        "jsCode": "// The bank's own addresses are defined once, in Detect Reference Reply.\nconst refCtx = $('Detect Reference Reply').item.json;\nconst BANK_EMAIL = refCtx.bankEmail;\nconst OPS_TEAM_EMAIL = refCtx.opsTeamEmail;\n\nconst meta = $('Extract Email Metadata').item.json;\nconst profile = $('Lookup Profile by Email').item.json;\n\nconst authorizedAccounts = [];\n$input.all().forEach(rec => {\n  if (rec.json && rec.json.accounts) {\n    authorizedAccounts.push({\n      account_id: rec.json.accounts.id,\n      account_number: rec.json.accounts.account_number,\n      account_type: rec.json.accounts.account_type,\n      currency: rec.json.accounts.currency,\n      balance: rec.json.accounts.balance,\n      status: rec.json.accounts.status,\n      role: rec.json.role,\n      holder_type: rec.json.holder_type || 'adult'\n    });\n  }\n});\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\n// Only what the customer actually typed this time counts.\nconst ownText = ownTextOf(meta.bodyText);\nconst bodyLower = ownText.toLowerCase();\nconst subjectLower = String(meta.subject || '').toLowerCase();\n\n// Derived before classification on purpose: \"send me my statement\" and\n// \"send 5000 to ACC-1234567890\" differ by exactly one thing -- whether there is\n// anywhere for money to go.\nconst primaryAcc = authorizedAccounts.find(a => a.role === 'primary' && a.status === 'active')\n                || authorizedAccounts.find(a => a.status === 'active') || null;\nconst amountMinor = amountMinorFrom(ownText) || amountMinorFrom(meta.subject);\nconst destination = accountNumberIn(ownText)\n                 || recipientEmailIn(ownText, meta.fromEmail, [BANK_EMAIL, OPS_TEAM_EMAIL]);\n\n// A question about something that already happened is not an instruction to do\n// it again. \"Why was my transfer rejected?\" used to be read as a fresh transfer\n// request, so the customer asking why their payment failed was told -- as the\n// answer -- that their payment had failed. Questions go to support.\nfunction isQuestionAboutPastAction(text) {\n  const asking = /\\b(why|what|how come|what happened|happened to|explain|reason|update|status|is there a problem|didn'?t i|has (it|this) been)\\b/.test(text);\n  const pastOutcome = /\\b(was|were|been|did ?n[o']t|could ?n[o']t|was ?n[o']t|failed|fail|rejected|declined|blocked|refused|denied|bounced|not go through|didn'?t work|still pending|still waiting|no response|not received|hasn'?t arrived)\\b/.test(text);\n  const instructing = /\\b(please\\s+(send|transfer|pay|deposit|credit)|^\\s*(send|transfer|pay)\\b|i (want|need|would like) to (send|transfer|pay|borrow|deposit))/.test(text);\n  return asking && pastOutcome && !instructing;\n}\n\nfunction classify(text) {\n  if (isQuestionAboutPastAction(text)) return 'POLICY_RAG';\n\n  const wantsJoint = /\\bjoint\\b/.test(text) && /\\b(open|create|start|add|make)\\b/.test(text);\n  const wantsOpen = /\\b(open(ing)? an? account|new account|create an? account|set ?up an? account|start an? account|sign(ing)? ?up|register(ing|ration)?|become a (customer|member)|i (want|need|would like) an? account)\\b/.test(text) && !/\\bjoint\\b/.test(text);\n  const wantsClosure = /\\b(close|closing|delete|deleting|deactivate|terminate|cancel)\\b/.test(text) && /\\b(account)\\b/.test(text) && !/\\bloan\\b/.test(text);\n  const wantsDispute = /\\b(dispute|fraud(ulent)?|unauthorized|unauthorised|stolen|freeze|chargeback|didn't make|did not make|don't recognize|do not recognize|without (my )?permission|used my card)\\b/.test(text);\n\n  // Cancelling an application must be tested BEFORE applying for one, or\n  // \"cancel my loan application\" is read as \"apply for a loan\".\n  const wantsLoanCancel = /\\b(cancel|withdraw|revoke|retract|remove|take back|drop|rescind|call off|no longer want)\\b/.test(text)\n                       && /\\b(loan|borrow(ing)?|financing|application)\\b/.test(text);\n  const wantsLoan = /\\b(loan|borrow|lend me|financing)\\b/.test(text);\n  const wantsDeposit = /\\b(deposit|add money|top ?up|fund my account|put money)\\b/.test(text) && !wantsLoan;\n  const wantsStanding = /\\b(standing order|recurring|scheduled payment|direct debit)\\b/.test(text);\n  const wantsTransfer = /\\b(transfer|send|pay|remit|wire)\\b/.test(text);\n  const wantsStatement = /\\b(statement|transaction history|account history|list of transactions|activity)\\b/.test(text);\n  const wantsBalance = /\\b(balance|how much)\\b/.test(text);\n  const wantsPolicy = /\\b(policy|policies|fee|fees|limit|limits|overdraft|credit card|interest rate|rule|rules|terms)\\b/.test(text);\n\n  // Asking how something works is not an instruction to do it. A customer\n  // asking \"can I send money to an email address, and what happens if I cancel\n  // an application after it is approved\" was classified ACCOUNT_CLOSURE,\n  // because the words \"cancel\" and \"account\" both appear in the question. The\n  // reply would have been a closure confirmation for an account nobody asked\n  // to close.\n  const asksHow = /\\b(what happens|what would happen|what if|is it possible|am i able|do i need|do i have to|how do i|how does|how can i|can i|could i|may i|are you able)\\b/.test(text);\n  const instructs = /\\b(please\\s+(cancel|close|withdraw|delete|deactivate|terminate|send|transfer|pay|deposit|credit)|^\\s*(cancel|close|withdraw|delete|deactivate|terminate)\\b|i (want|need|would like) (to|you to)\\b)/.test(text);\n  const hypothetical = asksHow && !instructs;\n\n\n  // Every action below needs something concrete to act on. Without it the\n  // message is a question about the rule, not an instruction to apply it.\n  if (wantsJoint && !hypothetical) return 'JOINT_OPEN';\n  if (wantsOpen && !hypothetical) return 'OPEN_ACCOUNT';\n  if (wantsClosure && !hypothetical && !destination) return 'ACCOUNT_CLOSURE';\n  if (wantsDispute && !hypothetical) return 'DISPUTE';\n  if (wantsLoanCancel && !hypothetical) return 'LOAN_CANCEL';\n  if (wantsLoan && !hypothetical && amountMinor) return 'LOAN_APPLICATION';\n  if (wantsDeposit && !hypothetical && amountMinor) return 'DEPOSIT';\n  if (wantsStanding) return 'STANDING_ORDER';\n  // A transfer needs somewhere to go. Without a destination this is far more\n  // likely to be a message *about* money than an instruction to move it, and\n  // \"send me my statement\" is not a payment. With a destination the transfer\n  // wins, because \"close my account and send the balance to ACC-1234567890\"\n  // must move the money.\n  if (wantsTransfer && destination) return 'TRANSFER';\n  if (wantsStatement) return 'STATEMENT';\n  if (wantsBalance) return 'BALANCE';\n  if (wantsTransfer && !hypothetical) return 'TRANSFER';\n  if (wantsPolicy) return 'POLICY_RAG';\n  // A loan or deposit named without an amount cannot be executed. Answering\n  // with the policy gives the limits and says exactly what to send next,\n  // instead of emailing a rejection for a request never fully made.\n  if (wantsLoan || wantsDeposit) return 'POLICY_RAG';\n  if (hypothetical) return 'POLICY_RAG';\n  return 'UNKNOWN';\n}\n\nlet intent = classify(bodyLower);\nif (intent === 'UNKNOWN') intent = classify(subjectLower);\n\nfunction parseTerm(text) {\n  const m = String(text || '').match(/(\\d+)\\s*(day|days|week|weeks|month|months|year|years)/i);\n  if (!m) return null;\n  const n = parseInt(m[1], 10);\n  const unit = m[2].toLowerCase();\n  let t;\n  if (unit.indexOf('year') === 0) t = n * 12;\n  else if (unit.indexOf('month') === 0) t = n;\n  else if (unit.indexOf('week') === 0) t = Math.ceil(n / 4);\n  else t = Math.ceil(n / 30);\n  return Math.min(60, Math.max(1, t));\n}\n\n// Details are derived for every message, not only the intent we settled on,\n// so the LLM fallback can change the label without having to re-derive any of\n// this. Two copies of the extraction logic is how they drift apart.\nconst termMonths = parseTerm(ownText) || parseTerm(meta.subject) || 12;\n\nconst transferDetails = {\n  source_account_id: primaryAcc ? primaryAcc.account_id : null,\n  destination_account: destination,\n  amount: amountMinor,\n  currency: primaryAcc ? primaryAcc.currency : 'PKR',\n  idempotency_key: 'gmail_' + meta.messageId\n};\n\n// A transfer with neither an amount nor a recipient is not a transfer request,\n// whatever words it used. Treat it as a question instead of replying with a\n// complaint about the missing account number.\nif (intent === 'TRANSFER' && !amountMinor && !destination) intent = 'POLICY_RAG';\n\nconst jointEmail = recipientEmailIn(ownText, meta.fromEmail, [BANK_EMAIL, OPS_TEAM_EMAIL]);\n\nconst ownNumbers = authorizedAccounts.map(a => String(a.account_number).toUpperCase());\nconst mentioned = (String(meta.subject || '') + ' ' + ownText).toUpperCase()\n                    .match(/\\b(TEST|ACC|JNT)-[A-Z0-9-]+\\b/g) || [];\nconst foreignMentioned = mentioned.filter(n => ownNumbers.indexOf(n) === -1);\n\nif ((intent === 'BALANCE' || intent === 'UNKNOWN') && foreignMentioned.length > 0) {\n  intent = 'UNAUTHORIZED_ACCESS';\n}\n\nreturn [{\n  json: {\n    fromEmail: meta.fromEmail,\n    subject: meta.subject,\n    bodyText: meta.bodyText,\n    ownText,\n    messageId: meta.messageId,\n    profile_id: profile.id,\n    full_name: profile.full_name,\n    authorizedAccounts,\n    intent,\n    transferDetails,\n    jointInviteeEmail: intent === 'JOINT_OPEN' ? jointEmail : null,\n    loanDetails: { account_id: primaryAcc ? primaryAcc.account_id : null,\n                   amount: amountMinor, term_months: termMonths },\n    depositDetails: { account_id: primaryAcc ? primaryAcc.account_id : null,\n                      amount: amountMinor }\n  }\n}];"
       },
       "id": "384b42dd-9313-4a0f-b573-d225d837e452",
       "name": "Classify Intent & Authorize Request",
@@ -2562,7 +2562,7 @@
         -200
       ],
       "parameters": {
-        "jsCode": "// Every email the bank sends that needs a human answer carries a short reference\n// code. When that human replies, the code comes back to us and tells us exactly\n// which pending decision this is. Four families:\n//   OPS-xxxxxxxx  a bank decision, only the ops mailbox may answer it\n//   JNT-xxxxxxxx  a joint-account action, only a holder (or, for an invitation\n//                 to join, the invited person) may answer it - checked in SQL\n//   MIN-xxxxxxxx  a guardian consent, only the named guardian may answer it\n//   DSP-xxxxxxxx  a dispute, co-holders adding their side of the story\n\nconst OPS_TEAM_EMAIL = 'ops-team@yourbank.example';\nconst BANK_EMAIL = 'bank@yourbank.example';\n\nconst meta = $input.first().json;\nconst from = String(meta.fromEmail || '').toLowerCase().trim();\nconst subject = String(meta.subject || '');\nconst body = String(meta.bodyText || '');\n\nconst passthrough = Object.assign({}, meta, {\n  isRefReply: false, refKind: null, refCode: null,\n  decision: null, opsNote: null,\n  opsTeamEmail: OPS_TEAM_EMAIL, bankEmail: BANK_EMAIL\n});\n\nconst refMatch = (subject + '\\n' + body).match(/\\b(OPS|JNT|MIN|DSP)-([A-Za-z0-9]{8})\\b/);\nif (!refMatch) {\n  return [{ json: passthrough }];\n}\n\nconst prefix = refMatch[1].toUpperCase();\nconst refCode = prefix + '-' + refMatch[2].toUpperCase();\nlet refKind = prefix === 'OPS' ? 'ops'\n            : prefix === 'JNT' ? 'joint'\n            : prefix === 'MIN' ? 'minor'\n            : 'dispute';\n\n// An OPS code is only actionable when it comes from the ops mailbox itself.\n// Anyone else quoting the code back at us is just a normal customer email.\nif (refKind === 'ops' && from !== OPS_TEAM_EMAIL) {\n  return [{ json: passthrough }];\n}\n\n// Gmail quotes the original message in a reply, so the decision must be read from\n// what the person actually typed -- everything above the first quote marker.\nlet ownText = body;\nconst cutMarkers = [/-{2,}\\s*Original Message/i, /\\bOn\\s+\\w.{0,160}?\\bwrote:/i, /^\\s*>/m, /_{10,}/, /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i, /={3,}BANKING-OPS-ACTION/];\nlet cutAt = ownText.length;\nfor (const marker of cutMarkers) {\n  const hit = ownText.match(marker);\n  if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cutAt) cutAt = hit.index;\n}\nownText = ownText.slice(0, cutAt);\n\n// An explicit NOTE: line lets ops attach a rejection reason or an edited answer,\n// and lets a co-holder attach their side of a dispute.\nlet opsNote = null;\nconst noteMatch = ownText.match(/^\\s*NOTE\\s*:\\s*([\\s\\S]+)$/im);\nif (noteMatch) {\n  opsNote = noteMatch[1].trim() || null;\n  ownText = ownText.slice(0, noteMatch.index);\n}\n\nconst decisionText = (subject + '\\n' + ownText);\nconst saysApprove = /\\b(approve|approved|approves|accept|accepted|authorise|authorised|authorize|authorized|yes|agreed?|confirm|confirmed)\\b/i.test(decisionText);\nconst saysReject  = /\\b(reject|rejected|rejects|decline|declined|deny|denied|refuse|refused|no|disagreed?)\\b/i.test(decisionText);\n\nlet decision = null;\nif (saysApprove && !saysReject) decision = 'approve';\nelse if (saysReject && !saysApprove) decision = 'reject';\n\n// Both words, or neither: we must NOT guess. Passing \"not approve\" through as a\n// rejection would silently kill a pending request because someone replied\n// \"no problem, thanks\". Route to a clarification email instead and leave the\n// request untouched and still pending.\nif (decision === null) {\n  refKind = 'unclear';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  isRefReply: true, refKind, refCode, decision, opsNote,\n  opsTeamEmail: OPS_TEAM_EMAIL, bankEmail: BANK_EMAIL\n}) }];"
+        "jsCode": "// Every email the bank sends that needs a human answer carries a short reference\n// code. When that human replies, the code comes back to us and tells us exactly\n// which pending decision this is. Four families:\n//   OPS-xxxxxxxx  a bank decision, only the ops mailbox may answer it\n//   JNT-xxxxxxxx  a joint-account action, only a holder (or, for an invitation\n//                 to join, the invited person) may answer it - checked in SQL\n//   MIN-xxxxxxxx  a guardian consent, only the named guardian may answer it\n//   DSP-xxxxxxxx  a dispute, co-holders adding their side of the story\n\n// Who the operations team is, and which mailbox is theirs, is a database\n// question now -- there can be more than one operator.\nconst staff = $('Check Sender Is Staff').item.json;\nconst OPS_TEAM_EMAIL = staff.ops_inbox;\nconst IS_STAFF = staff.is_staff === true;\nconst BANK_EMAIL = 'bank@yourbank.example';\n\nconst meta = $('Extract Email Metadata').item.json;\nconst from = String(meta.fromEmail || '').toLowerCase().trim();\nconst subject = String(meta.subject || '');\nconst body = String(meta.bodyText || '');\n\nconst passthrough = Object.assign({}, meta, {\n  isRefReply: false, refKind: null, refCode: null,\n  decision: null, opsNote: null,\n  opsTeamEmail: OPS_TEAM_EMAIL, bankEmail: BANK_EMAIL, isStaff: IS_STAFF\n});\n\nconst refMatch = (subject + '\\n' + body).match(/\\b(OPS|JNT|MIN|DSP)-([A-Za-z0-9]{8})\\b/);\nif (!refMatch) {\n  return [{ json: passthrough }];\n}\n\nconst prefix = refMatch[1].toUpperCase();\nconst refCode = prefix + '-' + refMatch[2].toUpperCase();\nlet refKind = prefix === 'OPS' ? 'ops'\n            : prefix === 'JNT' ? 'joint'\n            : prefix === 'MIN' ? 'minor'\n            : 'dispute';\n\n// An OPS code is only actionable when an operator sends it back. Anyone else\n// quoting the code at us is just a normal customer email. Any operator may\n// answer it, not only the mailbox it happened to be addressed to.\nif (refKind === 'ops' && !IS_STAFF) {\n  return [{ json: passthrough }];\n}\n\n// Gmail quotes the original message in a reply, so the decision must be read from\n// what the person actually typed -- everything above the first quote marker.\nlet ownText = body;\nconst cutMarkers = [/-{2,}\\s*Original Message/i, /\\bOn\\s+\\w.{0,160}?\\bwrote:/i, /^\\s*>/m, /_{10,}/, /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i, /={3,}BANKING-OPS-ACTION/];\nlet cutAt = ownText.length;\nfor (const marker of cutMarkers) {\n  const hit = ownText.match(marker);\n  if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cutAt) cutAt = hit.index;\n}\nownText = ownText.slice(0, cutAt);\n\n// An explicit NOTE: line lets ops attach a rejection reason or an edited answer,\n// and lets a co-holder attach their side of a dispute.\nlet opsNote = null;\nconst noteMatch = ownText.match(/^\\s*NOTE\\s*:\\s*([\\s\\S]+)$/im);\nif (noteMatch) {\n  opsNote = noteMatch[1].trim() || null;\n  ownText = ownText.slice(0, noteMatch.index);\n}\n\nconst decisionText = (subject + '\\n' + ownText);\nconst saysApprove = /\\b(approve|approved|approves|accept|accepted|authorise|authorised|authorize|authorized|yes|agreed?|confirm|confirmed)\\b/i.test(decisionText);\nconst saysReject  = /\\b(reject|rejected|rejects|decline|declined|deny|denied|refuse|refused|no|disagreed?)\\b/i.test(decisionText);\n\nlet decision = null;\nif (saysApprove && !saysReject) decision = 'approve';\nelse if (saysReject && !saysApprove) decision = 'reject';\n\n// Both words, or neither: we must NOT guess. Passing \"not approve\" through as a\n// rejection would silently kill a pending request because someone replied\n// \"no problem, thanks\". Route to a clarification email instead and leave the\n// request untouched and still pending.\nif (decision === null) {\n  refKind = 'unclear';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  isRefReply: true, refKind, refCode, decision, opsNote,\n  opsTeamEmail: OPS_TEAM_EMAIL, bankEmail: BANK_EMAIL, isStaff: IS_STAFF\n}) }];"
       }
     },
     {
@@ -5251,9 +5251,9 @@
       ],
       "parameters": {
         "sendTo": "ops-team@yourbank.example",
-        "subject": "=[{{ $json.ops_ref_code }}] Dispute {{ $json.ref_code }} on {{ $json.account_number }}",
+        "subject": "=[{{ $('Raise Dispute').item.json.ops_ref_code }}] Dispute {{ $('Raise Dispute').item.json.ref_code }} on {{ $('Raise Dispute').item.json.account_number }}",
         "emailType": "text",
-        "message": "=A customer has raised a dispute. Every dispute is decided by a person - there is no automated resolution.\n\nDispute: {{ $json.ref_code }}\nAccount: {{ $json.account_number }}\nRaised by: {{ $json.raised_by_email }}\nTransaction: {{ $json.transaction_id || 'not specified - customer did not quote a reference' }}\nAmount: {{ $json.disputed_amount ? 'Rs ' + ($json.disputed_amount / 100).toFixed(2) : 'not specified' }}\n\n{{ $json.is_joint_account ? 'THIS IS A JOINT ACCOUNT with ' + $json.holder_count + ' holders. The other holders have been asked for their side and their responses are being collected against this dispute. Check them before deciding - one holder disputing a transaction another holder made is the case this process exists for.' : 'Single-holder account.' }}\n\nWHAT THEY SAID\n{{ $('Resolve Dispute Request').item.json.description }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE   - uphold the dispute. If a transaction was identified this REVERSES it, clawing back what it can and recording any shortfall as a debt.\nor\n    REJECT    - the transaction stands.\n\nAdd a line starting with NOTE: to record your reasoning; it is shown to the customer.\n\nKeep the reference {{ $json.ops_ref_code }} in the reply - it is already in the subject line. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $json.ops_ref_code }}\nTYPE: dispute\n========================",
+        "message": "=A customer has raised a dispute. Every dispute is decided by a person - there is no automated resolution.\n\nDispute: {{ $('Raise Dispute').item.json.ref_code }}\nAccount: {{ $('Raise Dispute').item.json.account_number }}\nRaised by: {{ $('Raise Dispute').item.json.raised_by_email }}\nTransaction: {{ $('Raise Dispute').item.json.transaction_id || 'not specified - customer did not quote a reference' }}\nAmount: {{ $('Raise Dispute').item.json.disputed_amount ? 'Rs ' + ($('Raise Dispute').item.json.disputed_amount / 100).toFixed(2) : 'not specified' }}\n\n{{ $('Raise Dispute').item.json.is_joint_account ? 'THIS IS A JOINT ACCOUNT with ' + $('Raise Dispute').item.json.holder_count + ' holders. The other holders have been asked for their side and their responses are being collected against this dispute. Check them before deciding - one holder disputing a transaction another holder made is the case this process exists for.' : 'Single-holder account.' }}\n\nWHAT THEY SAID\n{{ $('Resolve Dispute Request').item.json.description }}\n\nHOW TO DECIDE\nReply to this email with a single word on the first line:\n\n    APPROVE   - uphold the dispute. If a transaction was identified this REVERSES it, clawing back what it can and recording any shortfall as a debt.\nor\n    REJECT    - the transaction stands.\n\nAdd a line starting with NOTE: to record your reasoning; it is shown to the customer.\n\nKeep the reference {{ $('Raise Dispute').item.json.ops_ref_code }} in the reply - it is already in the subject line. This reference expires in 7 days.\n\n===BANKING-OPS-ACTION===\nREF: {{ $('Raise Dispute').item.json.ops_ref_code }}\nTYPE: dispute\n========================",
         "options": {
           "appendAttribution": false
         }
@@ -5402,11 +5402,12 @@
           "conditions": [
             {
               "id": "ops-sender",
-              "leftValue": "={{ ($json.fromEmail || '').toLowerCase() }}",
-              "rightValue": "={{ ($json.opsTeamEmail || '').toLowerCase() }}",
+              "leftValue": "={{ $json.isStaff }}",
+              "rightValue": "",
               "operator": {
-                "type": "string",
-                "operation": "equals"
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               }
             }
           ],
@@ -5431,7 +5432,7 @@
         1680
       ],
       "parameters": {
-        "jsCode": "// A free-text instruction from the operations mailbox. This is NOT a reply to\n// a reference code -- those are handled upstream. It is ops reaching in to\n// move something that is stuck.\n//\n// Two commands, both deliberately narrow. Anything else is bounced back rather\n// than guessed at, because guessing here moves real money.\nconst meta = $json;\nconst OPS_TEAM_EMAIL = meta.opsTeamEmail;\nconst BANK_EMAIL = meta.bankEmail;\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\nconst text = ownTextOf(meta.bodyText);\nconst lower = (String(meta.subject || '') + '\\n' + text).toLowerCase();\n\nlet note = null;\nconst noteMatch = text.match(/\\bNOTE\\s*:\\s*([\\s\\S]+)$/i);\nif (noteMatch) note = (noteMatch[1] || '').trim() || null;\n\nconst target = accountNumberIn(text)\n            || recipientEmailIn(text, OPS_TEAM_EMAIL, [BANK_EMAIL]);\n\nconst mentionsLoan = /\\bloan\\b/.test(lower);\nconst approves = /\\b(approve|approved|authorise|authorize|grant)\\b/.test(lower);\nconst rejects = /\\b(reject|rejected|decline|declined|deny|denied|refuse|refused)\\b/.test(lower);\n\n// \"credit\"/\"give\"/\"pay\" -- the bank handing money to a customer outright.\nconst credits = /\\b(credit|give|grant|issue|pay out|payout|disburse|reimburse|refund|compensate|award)\\b/.test(lower);\n\nlet command = 'unclear';\nlet decision = null;\nconst amount = amountMinorFrom(text);\n\nif (mentionsLoan && (approves || rejects) && !(approves && rejects)) {\n  command = 'loan_decision';\n  decision = approves ? 'approve' : 'reject';\n} else if (credits && amount > 0 && target) {\n  command = 'credit';\n}\n\n// Never act on half an instruction.\nif (command === 'credit' && (!target || amount <= 0)) command = 'unclear';\nif (command === 'loan_decision' && !target) command = 'unclear';\n\nlet why = null;\nif (command === 'unclear') {\n  if (!target) why = 'no account number or customer email address in the message';\n  else if (mentionsLoan && approves && rejects) why = 'the message says both approve and reject';\n  else if (credits && amount <= 0) why = 'no amount to credit';\n  else why = 'it did not match a supported operations command';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  opsCommand: command, opsTarget: target, opsAmount: amount,\n  opsDecision: decision, opsNote: note, opsUnclearReason: why,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
+        "jsCode": "// A free-text instruction from the operations mailbox. This is NOT a reply to\n// a reference code -- those are handled upstream. It is ops reaching in to\n// move something that is stuck.\n//\n// Two commands, both deliberately narrow. Anything else is bounced back rather\n// than guessed at, because guessing here moves real money.\nconst meta = $json;\nconst OPS_TEAM_EMAIL = meta.opsTeamEmail;\nconst BANK_EMAIL = meta.bankEmail;\n\n// Gmail, Proton and every mobile client quote the message being replied to.\n// On some clients the whole reply arrives as ONE line, so markers anchored to\n// the start of a line never match and the quoted text is read as if the\n// customer had typed it. That is how a reply could end up \"addressed\" to the\n// bank's own address. Cut at the earliest marker found anywhere in the text.\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\n// Account numbers, email addresses, dates and times all contain digits. Strip\n// them before looking for an amount, or \"pay ACC-1D1BE88F6D 5000\" reads as a\n// payment of one rupee.\nfunction scrubForAmount(text) {\n  return String(text || '')\n    .replace(/\\b(?:TEST|ACC|JNT|OPS|MIN|DSP)-[A-Za-z0-9-]+/gi, ' ')\n    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g, ' ')\n    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ' ')\n    .replace(/\\d{1,4}[\\/-]\\d{1,2}[\\/-]\\d{1,4}/g, ' ')\n    .replace(/\\d{1,2}:\\d{2}(?::\\d{2})?/g, ' ');\n}\n\n// MONEY UNITS: the database stores BIGINT minor units (paisa). Customers write\n// major units. Always multiply by 100; never guess from magnitude.\nfunction amountMinorFrom(text) {\n  const clean = scrubForAmount(text);\n  const tagged = clean.match(/(?:rs\\.?|rupees?|pkr)\\s*([\\d,]+(?:\\.\\d{1,2})?)/i)\n              || clean.match(/([\\d,]+(?:\\.\\d{1,2})?)\\s*(?:rs\\b|rupees?|pkr)/i);\n  const plain = clean.match(/([\\d,]+(?:\\.\\d{1,2})?)/);\n  const pick = tagged || plain;\n  if (!pick) return 0;\n  const major = parseFloat(pick[1].replace(/,/g, ''));\n  return (!isNaN(major) && major > 0) ? Math.round(major * 100) : 0;\n}\n\nfunction accountNumberIn(text) {\n  const m = String(text || '').match(/\\b(TEST-[A-Z0-9-]+|ACC-[A-Z0-9-]+|JNT-[A-Z0-9-]+)\\b/i);\n  if (m) return m[1].toUpperCase();\n  const u = String(text || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);\n  return u ? u[0] : null;\n}\n\n// An email address is a legitimate way to name a recipient -- it is what this\n// bank authenticates on. The sender's own address and the bank's own addresses\n// are never recipients, and they are exactly what survives in a quoted reply.\nfunction recipientEmailIn(text, senderEmail, banned) {\n  const found = String(text || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g) || [];\n  const block = (banned || []).concat([String(senderEmail || '')])\n                  .map(e => String(e).toLowerCase());\n  const hit = found.map(e => e.toLowerCase().replace(/[.,;:]+$/, ''))\n                   .find(e => block.indexOf(e) === -1);\n  return hit || null;\n}\n\nconst text = ownTextOf(meta.bodyText);\nconst lower = (String(meta.subject || '') + '\\n' + text).toLowerCase();\n\nlet note = null;\nconst noteMatch = text.match(/\\bNOTE\\s*:\\s*([\\s\\S]+)$/i);\nif (noteMatch) note = (noteMatch[1] || '').trim() || null;\n\nconst target = accountNumberIn(text)\n            || recipientEmailIn(text, OPS_TEAM_EMAIL, [BANK_EMAIL]);\n\n// NEW PASSPHRASE: is checked first. It is the one command whose argument is\n// free text, so anything else matching inside it would be a misread.\nconst phraseMatch = text.match(/^[ \\t]*NEW[ \\t]+PASS[ \\t]?PHRASE[ \\t]*:[ \\t]*(.+)$/im);\nconst newPhrase = phraseMatch ? phraseMatch[1].trim() : null;\n\nconst mentionsLoan = /\\bloan\\b/.test(lower);\nconst approves = /\\b(approve|approved|authorise|authorize|grant)\\b/.test(lower);\nconst rejects = /\\b(reject|rejected|decline|declined|deny|denied|refuse|refused)\\b/.test(lower);\n\n// \"credit\"/\"give\"/\"pay\" -- the bank handing money to a customer outright.\nconst credits = /\\b(credit|give|grant|issue|pay out|payout|disburse|reimburse|refund|compensate|award)\\b/.test(lower);\n\nlet command = 'unclear';\nlet decision = null;\nconst amount = amountMinorFrom(text);\n\nif (newPhrase) {\n  command = 'passphrase';\n} else if (mentionsLoan && (approves || rejects) && !(approves && rejects)) {\n  command = 'loan_decision';\n  decision = approves ? 'approve' : 'reject';\n} else if (credits && amount > 0 && target) {\n  command = 'credit';\n}\n\n// Never act on half an instruction.\nif (command === 'credit' && (!target || amount <= 0)) command = 'unclear';\nif (command === 'loan_decision' && !target) command = 'unclear';\n\nlet why = null;\nif (command === 'unclear') {\n  if (!target) why = 'no account number or customer email address in the message';\n  else if (mentionsLoan && approves && rejects) why = 'the message says both approve and reject';\n  else if (credits && amount <= 0) why = 'no amount to credit';\n  else why = 'it did not match a supported operations command';\n}\n\nreturn [{ json: Object.assign({}, meta, {\n  opsCommand: command, opsTarget: target, opsAmount: amount,\n  opsDecision: decision, opsNote: note, opsUnclearReason: why,\n  opsNewPhrase: newPhrase,\n  opsTeamEmail: OPS_TEAM_EMAIL\n}) }];"
       }
     },
     {
@@ -5493,6 +5494,30 @@
               },
               "renameOutput": true,
               "outputKey": "Loan Decision"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ops-phrase",
+                    "leftValue": "={{ $json.opsCommand }}",
+                    "rightValue": "passphrase",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                }
+              },
+              "renameOutput": true,
+              "outputKey": "Pass Phrase"
             }
           ]
         },
@@ -5688,9 +5713,9 @@
       ],
       "parameters": {
         "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
-        "subject": "=Credit applied - {{ $json.account_number }} - Rs {{ ($json.amount / 100).toFixed(2) }}",
+        "subject": "=Credit applied - {{ $('Operator Credit Account').item.json.account_number }} - Rs {{ ($('Operator Credit Account').item.json.amount / 100).toFixed(2) }}",
         "emailType": "text",
-        "message": "=Credit applied.\n\nAccount: {{ $json.account_number }}\nHolder: {{ $json.holder_email }}\nAmount: Rs {{ ($json.amount / 100).toFixed(2) }}\nNew balance: Rs {{ ($json.new_balance / 100).toFixed(2) }}\nTransaction: {{ $json.transaction_id }}\n\nBooked against TREASURY-MAIN by double entry. The customer has been notified.\n\nDigital Bank",
+        "message": "=Credit applied.\n\nAccount: {{ $('Operator Credit Account').item.json.account_number }}\nHolder: {{ $('Operator Credit Account').item.json.holder_email }}\nAmount: Rs {{ ($('Operator Credit Account').item.json.amount / 100).toFixed(2) }}\nNew balance: Rs {{ ($('Operator Credit Account').item.json.new_balance / 100).toFixed(2) }}\nTransaction: {{ $('Operator Credit Account').item.json.transaction_id }}\n\nBooked against TREASURY-MAIN by double entry. The customer has been notified.\n\nDigital Bank",
         "options": {
           "appendAttribution": false
         }
@@ -5763,9 +5788,9 @@
       ],
       "parameters": {
         "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
-        "subject": "=Loan {{ $json.decision }}d - {{ $json.account_number }}",
+        "subject": "=Loan {{ $('Operator Decide Loan').item.json.decision }}d - {{ $('Operator Decide Loan').item.json.account_number }}",
         "emailType": "text",
-        "message": "=Loan decision recorded.\n\nAccount: {{ $json.account_number }}\nCustomer: {{ $json.holder_email }}\nDecision: {{ $json.decision }}\nLoan: {{ $json.loan_id }}\n\nThe customer has been notified.\n\nDigital Bank",
+        "message": "=Loan decision recorded.\n\nAccount: {{ $('Operator Decide Loan').item.json.account_number }}\nCustomer: {{ $('Operator Decide Loan').item.json.holder_email }}\nDecision: {{ $('Operator Decide Loan').item.json.decision }}\nLoan: {{ $('Operator Decide Loan').item.json.loan_id }}\n\nThe customer has been notified.\n\nDigital Bank",
         "options": {
           "appendAttribution": false
         }
@@ -5815,7 +5840,7 @@
         "sendTo": "={{ $json.opsTeamEmail }}",
         "subject": "=Operations command not understood",
         "emailType": "text",
-        "message": "=We could not act on that message, and nothing has changed.\n\nWhy: {{ $json.opsUnclearReason }}\n\nSupported operations commands:\n\n  Credit a customer (a grant -- not a loan, nothing to repay):\n    credit 5000 to someone@example.com\n    credit 5000 to ACC-1234567890\n    NOTE: goodwill payment for the delayed transfer\n\n  Decide a loan application that is awaiting review:\n    reject loan for ACC-1234567890\n    approve loan for someone@example.com\n    NOTE: insufficient account history\n\nTo approve or reject a specific pending request, reply to the email carrying its OPS- reference code with the single word APPROVE or REJECT.\n\nDigital Bank",
+        "message": "=We could not act on that message, and nothing has changed.\n\nWhy: {{ $json.opsUnclearReason }}\n\nSupported operations commands:\n\n  Credit a customer (a grant -- not a loan, nothing to repay):\n    credit 5000 to someone@example.com\n    credit 5000 to ACC-1234567890\n    NOTE: goodwill payment for the delayed transfer\n\n  Decide a loan application that is awaiting review:\n    reject loan for ACC-1234567890\n    approve loan for someone@example.com\n    NOTE: insufficient account history\n\n  Change the operations pass phrase:\n    NEW PASSPHRASE: something only the team knows\n\nTo approve or reject a specific pending request, reply to the email carrying its OPS- reference code with the single word APPROVE or REJECT.\n\nDigital Bank",
         "options": {
           "appendAttribution": false
         }
@@ -5963,9 +5988,9 @@
       ],
       "parameters": {
         "sendTo": "={{ $('Detect Reference Reply').item.json.opsTeamEmail }}",
-        "subject": "=Loan application withdrawn - {{ $json.account_number }}",
+        "subject": "=Loan application withdrawn - {{ $('Withdraw Loan Application').item.json.account_number }}",
         "emailType": "text",
-        "message": "=A customer has withdrawn their own loan application before it was decided.\n\nAccount: {{ $json.account_number }}\nCustomer: {{ $('Classify Intent & Authorize Request').item.json.fromEmail }}\nAmount: Rs {{ ($json.principal_amount / 100).toFixed(2) }}\nLoan: {{ $json.loan_id }}\n{{ $json.cancelled_ops_ref ? ('Cancelled pending approval: ' + $json.cancelled_ops_ref + ' -- no decision needed.') : 'No pending approval was open for it.' }}\n\nDigital Bank",
+        "message": "=A customer has withdrawn their own loan application before it was decided.\n\nAccount: {{ $('Withdraw Loan Application').item.json.account_number }}\nCustomer: {{ $('Classify Intent & Authorize Request').item.json.fromEmail }}\nAmount: Rs {{ ($('Withdraw Loan Application').item.json.principal_amount / 100).toFixed(2) }}\nLoan: {{ $('Withdraw Loan Application').item.json.loan_id }}\n{{ $('Withdraw Loan Application').item.json.cancelled_ops_ref ? ('Cancelled pending approval: ' + $('Withdraw Loan Application').item.json.cancelled_ops_ref + ' -- no decision needed.') : 'No pending approval was open for it.' }}\n\nDigital Bank",
         "options": {
           "appendAttribution": false
         }
@@ -5976,6 +6001,481 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "s12b-622369734",
+      "name": "Check Sender Is Staff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        544,
+        1472
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/staff_check",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_email\": {{ JSON.stringify($json.fromEmail) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      },
+      "notes": "The team used to be one hardcoded address, so a second operator could never work. Asking the database means an operator enrolled a minute ago is recognised immediately."
+    },
+    {
+      "id": "s12b-8109661309",
+      "name": "Detect Staff Enrolment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        2464
+      ],
+      "parameters": {
+        "jsCode": "// An address asking to join the operations team. Deliberately requires an\n// explicit PASSPHRASE: line rather than trying every unrecognised email\n// against the phrase -- that would burn an innocent sender's attempt budget\n// and turn every stray message into a guess.\n//\n// Only what the sender typed counts. If the quoted part of a reply were read\n// too, forwarding an enrolment email to someone would hand them the phrase and\n// let them enrol by replying to it.\nconst meta = $json;\n\nfunction ownTextOf(body) {\n  const t = String(body || '');\n  const markers = [\n    /-{2,}\\s*Original Message/i,\n    /\\bOn\\s+\\w.{0,160}?\\bwrote:/i,\n    /^\\s*>/m,\n    /_{10,}/,\n    /\\bSent from (?:Proton Mail|my iPhone|my iPad|my Android|Yahoo Mail|Outlook)/i,\n    /\\bFrom:\\s*.{0,120}\\bSent:/i\n  ];\n  let cut = t.length;\n  for (const m of markers) {\n    const hit = t.match(m);\n    if (hit && hit.index !== undefined && hit.index >= 0 && hit.index < cut) cut = hit.index;\n  }\n  return t.slice(0, cut);\n}\n\nconst own = ownTextOf(meta.bodyText);\nconst m = own.match(/^[ \\t]*PASS[ \\t]?PHRASE[ \\t]*:[ \\t]*(.+)$/im);\nconst phrase = m ? m[1].trim() : null;\n\nreturn [{ json: Object.assign({}, meta, {\n  isEnrolment: !!phrase,\n  enrolmentPhrase: phrase\n}) }];"
+      }
+    },
+    {
+      "id": "s12b-3095458930",
+      "name": "Is Staff Enrolment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1392,
+        2464
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.isEnrolment }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12b-4840324875",
+      "name": "Enrol Bank Staff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1664,
+        2464
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/enrol_bank_staff",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_email\": {{ JSON.stringify($json.fromEmail) }},\n  \"p_phrase\": {{ JSON.stringify($json.enrolmentPhrase) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "s12b-6320801550",
+      "name": "Staff Enrolled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1936,
+        2464
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12b-2131811214",
+      "name": "Email New Operator - Welcome",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2208,
+        2384
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Staff Enrolment').item.json.fromEmail }}",
+        "subject": "=Digital Bank - you are now on the operations team",
+        "emailType": "text",
+        "message": "=Your address is now registered as a Digital Bank operator.\n\nWHAT YOU CAN DO, by emailing this address:\n\n  Credit a customer (a grant -- not a loan, nothing for them to repay):\n    credit 5000 to someone@example.com\n    NOTE: goodwill payment for the delayed transfer\n\n  Decide a loan application awaiting review:\n    reject loan for ACC-1234567890\n    NOTE: insufficient account history\n\n  Change the pass phrase (do this if it has been shared too widely):\n    NEW PASSPHRASE: something only the team knows\n\n  Answer any request carrying an OPS- reference code by replying to it\n  with the single word APPROVE or REJECT.\n\nWHAT YOU CANNOT DO:\n\n  This address can no longer hold a customer account here, and an\n  address that already holds one cannot become an operator. That is\n  deliberate: an operator can credit any account, and nobody should be\n  able to credit their own.\n\nEvery operator has been told you joined, and every action you take is\nrecorded in the audit log against your address.\n\nDigital Bank Operations",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12b-74221060",
+      "name": "Split Existing Operators",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        2384
+      ],
+      "parameters": {
+        "jsCode": "// One email per existing operator. A new operator appearing silently is the\n// dangerous version of this feature; everyone already on the team hears about\n// it immediately, so a leaked phrase surfaces as a surprise rather than as\n// nothing at all.\nconst res = $('Enrol Bank Staff').item.json;\nconst joined = res.email;\nconst existing = res.existing_staff || [];\n\nreturn existing\n  .filter(e => String(e).toLowerCase() !== String(joined).toLowerCase())\n  .map(e => ({ json: { operatorEmail: e, joined } }));"
+      }
+    },
+    {
+      "id": "s12b-9314893088",
+      "name": "Alert Ops - New Operator Enrolled",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2752,
+        2384
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.operatorEmail }}",
+        "subject": "=New operator joined: {{ $json.joined }}",
+        "emailType": "text",
+        "message": "={{ $json.joined }} has just joined the operations team by sending the pass phrase.\n\nThey can now credit customer accounts, decide loan applications and answer OPS- approvals.\n\nIf you were not expecting this, change the pass phrase immediately by replying to this address with:\n\n    NEW PASSPHRASE: something only the team knows\n\nChanging it does not remove anyone already enrolled -- tell the bank administrator to deactivate them.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12b-7663170269",
+      "name": "Email Enrolment Refused",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1936,
+        2640
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Detect Staff Enrolment').item.json.fromEmail }}",
+        "subject": "=Digital Bank - operations access not granted",
+        "emailType": "text",
+        "message": "={{ $json.error || 'That request could not be granted.' }}\n\n{{ $json.wrong_phrase && $json.attempts_remaining > 0 ? ('Attempts remaining before this address is locked out for an hour: ' + $json.attempts_remaining) : '' }}\n\nNothing about your account or this bank has changed.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12b-3477137448",
+      "name": "Change Staff Passphrase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1936,
+        2208
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/change_staff_passphrase",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_operator_email\": {{ JSON.stringify($json.fromEmail) }},\n  \"p_new_phrase\": {{ JSON.stringify($json.opsNewPhrase) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "s12b-1053893751",
+      "name": "Passphrase Changed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2208,
+        2208
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12b-4664539943",
+      "name": "Split Operators For Phrase Notice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        2208
+      ],
+      "parameters": {
+        "jsCode": "// Everyone on the team needs the new phrase to be able to tell a colleague it\n// changed -- but the phrase itself is never emailed. Only the fact.\nconst res = $('Change Staff Passphrase').item.json;\nreturn (res.existing_staff || []).map(e => ({\n  json: { operatorEmail: e, changedBy: res.changed_by }\n}));"
+      }
+    },
+    {
+      "id": "s12b-2591461472",
+      "name": "Confirm Passphrase Change",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2752,
+        2208
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.operatorEmail }}",
+        "subject": "=Operations pass phrase changed",
+        "emailType": "text",
+        "message": "=The operations pass phrase was changed by {{ $json.changedBy }}.\n\nThe new phrase is not included in this email and is not stored anywhere in readable form -- only a hash of it is kept. Get it from whoever changed it.\n\nAnyone already on the team stays on the team; changing the phrase only affects who can join from now on.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12b-90160096",
+      "name": "Email Passphrase Change Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2208,
+        2016
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Parse Ops Command').item.json.opsTeamEmail }}",
+        "subject": "=Pass phrase NOT changed",
+        "emailType": "text",
+        "message": "=The pass phrase was not changed.\n\nReason: {{ $json.error || 'unknown error' }}\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12b-7217889608",
+      "name": "Transfer Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4960,
+        144
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $('Execute WF-01 Transfer Sub-Workflow').item.json.success }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "notes": "Only a completed transfer is announced to the recipient. The response email covers both outcomes, so it cannot be the gate."
+    },
+    {
+      "id": "s12b-512536591",
+      "name": "Split Recipient Holders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5232,
+        144
+      ],
+      "parameters": {
+        "jsCode": "// The recipient is told money arrived. Until now only the sender heard\n// anything, which is the half that already knew.\n//\n// Every holder of the destination account is told, because on a joint account\n// they are all equally the recipient. The sender is skipped -- moving money\n// between two accounts you hold should not email you twice.\nconst t = $('Resolve Transfer Target & Authorize').item.json;\nconst dest = $('Look Up Destination Account').item.json;\nconst sender = String(t.fromEmail || '').toLowerCase();\n\nconst holders = (dest.holder_emails || [])\n  .filter(e => String(e).toLowerCase() !== sender);\n\nreturn holders.map(e => ({ json: {\n  recipientEmail: e,\n  amount: t.amount,\n  destinationAccount: dest.account_number,\n  senderAccount: t.source_account_number,\n  senderName: t.full_name\n} }));"
+      }
+    },
+    {
+      "id": "s12b-8269961152",
+      "name": "Email Recipient - Money Received",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        5504,
+        144
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.recipientEmail }}",
+        "subject": "=Digital Bank - Rs {{ ($json.amount / 100).toFixed(2) }} received",
+        "emailType": "text",
+        "message": "=Hello,\n\nMoney has arrived in your account.\n\nAmount: Rs {{ ($json.amount / 100).toFixed(2) }}\nInto: {{ $json.destinationAccount }}\nFrom: {{ $json.senderName }} ({{ $json.senderAccount }})\n\nNo action is needed. Reply to this email if you were not expecting it and do not recognise the sender, and we will open a dispute.\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "s12b-noop-recipient",
+      "name": "No Recipient Notice Needed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        5232,
+        320
+      ],
+      "parameters": {},
+      "notes": "The transfer did not complete, so there is nothing to announce."
     }
   ],
   "connections": {
@@ -7370,7 +7870,7 @@
         ],
         [
           {
-            "node": "Detect Reference Reply",
+            "node": "Check Sender Is Staff",
             "type": "main",
             "index": 0
           }
@@ -7701,7 +8201,7 @@
         ],
         [
           {
-            "node": "Check Pending Joint Invitation",
+            "node": "Detect Staff Enrolment",
             "type": "main",
             "index": 0
           }
@@ -7731,6 +8231,13 @@
         [
           {
             "node": "Operator Decide Loan",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Change Staff Passphrase",
             "type": "main",
             "index": 0
           }
@@ -7858,6 +8365,177 @@
         [
           {
             "node": "Alert Ops - Loan Application Withdrawn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Sender Is Staff": {
+      "main": [
+        [
+          {
+            "node": "Detect Reference Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Staff Enrolment": {
+      "main": [
+        [
+          {
+            "node": "Is Staff Enrolment?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Staff Enrolment?": {
+      "main": [
+        [
+          {
+            "node": "Enrol Bank Staff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Pending Joint Invitation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrol Bank Staff": {
+      "main": [
+        [
+          {
+            "node": "Staff Enrolled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Staff Enrolled?": {
+      "main": [
+        [
+          {
+            "node": "Email New Operator - Welcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Enrolment Refused",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email New Operator - Welcome": {
+      "main": [
+        [
+          {
+            "node": "Split Existing Operators",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Existing Operators": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops - New Operator Enrolled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Change Staff Passphrase": {
+      "main": [
+        [
+          {
+            "node": "Passphrase Changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Passphrase Changed?": {
+      "main": [
+        [
+          {
+            "node": "Split Operators For Phrase Notice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Passphrase Change Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Operators For Phrase Notice": {
+      "main": [
+        [
+          {
+            "node": "Confirm Passphrase Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Transfer Response Email": {
+      "main": [
+        [
+          {
+            "node": "Transfer Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transfer Completed?": {
+      "main": [
+        [
+          {
+            "node": "Split Recipient Holders",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Recipient Notice Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Recipient Holders": {
+      "main": [
+        [
+          {
+            "node": "Email Recipient - Money Received",
             "type": "main",
             "index": 0
           }

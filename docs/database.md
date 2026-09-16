@@ -130,3 +130,36 @@ n8n must agree with it: the ops address is also defined in WF-00's `Detect Refer
 **`operator_decide_loan(p_operator_email, p_target, p_decision, p_reason)`** - lets ops decide a pending application by naming the account or customer instead of quoting an `OPS-` code. The reference-code round trip remains the normal path; this exists for clearing something stuck.
 
 Both operator functions verify `is_bank_staff()` first and refuse everyone else.
+
+## 028: staff enrolment, and naming the people who get paid
+
+| # | File | What it adds |
+|---|---|---|
+| 028 | `028_staff_enrolment_and_recipient_details.sql` | `staff_passphrase` and `staff_enrolment_attempts`. `staff_check()`, `enrol_bank_staff()`, `change_staff_passphrase()`. `resolve_destination_account()` now also returns the destination's holder addresses. |
+
+### New tables
+
+**`staff_passphrase`** - a single row holding a **bcrypt hash** of the operations enrolment phrase. The plain text is not in this table, not in the repository, and not in any email the bank sends. Only whoever set it knows it.
+
+**`staff_enrolment_attempts`** - every attempt, successful or not, with the reason. Five failures from one address in an hour locks that address out, and a phrase being guessed at leaves a trail rather than leaving nothing.
+
+### Joining the operations team
+
+An address emails the bank with a line reading `PASSPHRASE: <the phrase>` and becomes an operator. That is a privilege grant by shared secret, which is a genuinely risky shape, so four things bound it:
+
+- **A customer address can never enrol.** This is the control that matters. An operator can credit any account; someone who is both customer and operator can credit their own. `enrol_bank_staff()` refuses any address with a profile, and the migration 027 trigger refuses to create a profile for an address that is already staff. The separation holds from both directions.
+- **Five wrong guesses per address per hour**, checked before the phrase is examined so a near-miss and nonsense hit the same wall.
+- **Every attempt is recorded**, right or wrong.
+- **Every existing operator is emailed the moment someone joins.** A silent privilege grant is the dangerous one.
+
+Enrolment requires an explicit `PASSPHRASE:` line rather than testing every unrecognised email against the phrase, which would spend an innocent sender's attempt budget and turn any stray message into a guess.
+
+### Rotating the phrase
+
+Any active operator emails `NEW PASSPHRASE: <the new phrase>`. Minimum eight characters. Every operator is told it changed and by whom, and none of them is sent the phrase itself. Rotation is what makes a shared secret survivable, so it must not need a developer.
+
+Rotating also clears the recent failure counters, so an honest operator is not left serving out someone else's lockout.
+
+### One team, not one address
+
+`staff_check()` answers three things the routing layer needs: whether this sender is staff, which mailbox is the team inbox (the oldest active operator, so enrolling a second one does not redirect the bank's mail), and how many operators there are. Before this the team was a single hardcoded address in a Code node, which quietly meant a second operator could never have worked.

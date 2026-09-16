@@ -230,3 +230,19 @@ WF-05 has eight Respond to Webhook nodes, so unlike the others its endpoints ran
 | Update draft/case state, write audit rows | done inside `resolve_ops_approval()` in SQL |
 
 It was superseded when ops moved to email, and was simply left running. Deleting it, and removing the three inert webhook triggers, is still worth doing.
+
+### Session 12, second pass: blank emails, the recipient, and a real operations team
+
+**Four ops emails were rendering blank fields and `Rs NaN`.** Each sat downstream of another Gmail node, so its bare `$json` was the Gmail *send response* — `{id, threadId, labelIds}` — and every business field resolved to undefined. The email still sent, still looked well formed, and said nothing.
+
+Three were introduced in this session. The fourth, `Alert Ops - Dispute Raised`, had been broken since Session 11 and was never noticed because the dispute path had only ever been exercised by RPC.
+
+`n8n/validate_workflows.py` now fails the build on it: any node whose predecessors are all Gmail nodes and which reads a `$json` field other than `id`/`threadId`/`labelIds` is reported by name. This is the same class of hazard as the switch-fallback one and it is now caught the same way — automatically, rather than by someone noticing an email that reads oddly.
+
+**The recipient is told the money arrived.** Only the sender was ever emailed, which is the half that already knew. `Transfer Completed?` gates on the sub-workflow's `success` rather than on the response email, which is sent for both outcomes; `Split Recipient Holders` emails every holder of the destination account and skips the sender, so moving money between two accounts you hold does not email you twice. The notice names the sender's name and account number but not their email address.
+
+**The operations team is a team now.** `Is Ops Team Sender?` compared the sender against one hardcoded address, so a second operator could never have worked no matter what the database said. `Check Sender Is Staff` asks `staff_check()` on every inbound email; `Detect Reference Reply` takes both the team inbox and the staff verdict from it, and any operator can answer an `OPS-` code rather than only the mailbox it was addressed to.
+
+**Joining the team by pass phrase.** `PASSPHRASE: <phrase>` from an address that holds no accounts enrols it; `NEW PASSPHRASE: <phrase>` from an existing operator rotates it. The security reasoning is in `database.md` under migration 028. The two forms are deliberately distinct words rather than the same syntax meaning different things depending on who sent it.
+
+Adding the third rule to `Route Ops Command` moved its fallback from output 2 to output 3. Rule and rewiring went in one atomic update, as they now always do.
