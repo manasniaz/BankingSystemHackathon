@@ -217,3 +217,16 @@ order by permitted, caller;
 ```
 
 Run it after adding any function that calls another. Eleven cross-owner calls exist today and all are permitted.
+
+## 031-032: an invisible queue, and a separation that only held one way
+
+| # | File | What it adds |
+|---|---|---|
+| 031 | `031_list_pending_approvals.sql` | `list_pending_approvals()` — an operator emails "list pending approvals" and gets the queue back. |
+| 032 | `032_guard_staff_activation_against_customers.sql` | A trigger on `bank_staff` refusing to activate an address that holds a customer account. |
+
+**031.** An alert email can be lost, filed as spam, or deleted. When that happens the approval queue becomes invisible and the request expires silently after seven days — which is how a customer's loan ends up decided by nobody. An operator can now ask what is waiting instead of depending on a message having arrived. Each row carries its reference code, how long is left, and whether it is theirs to decide or the administrator's.
+
+**032.** The customer/staff separation was enforced in one direction only. Migration 027 stopped a staff address becoming a customer; nothing stopped a customer address being activated as staff. That is reachable in ordinary use — an operator is removed, opens an account (the documented behaviour for a removed address), and is later re-activated. They would then be both, which is exactly the combination the rule exists to prevent, because an operator can act on any account including their own.
+
+`enrol_bank_staff()` already refused it on the way in. The trigger is the floor under that for any path writing the table directly.

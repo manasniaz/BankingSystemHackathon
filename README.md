@@ -32,20 +32,21 @@ Modern banking demands seamless email interaction without sacrificing financial 
 | Component / Layer | Implementation Status | Deployment Environment | Live / Active Target |
 |---|---|---|---|
 | **Bank Gmail Intake** | ✅ Implemented | Live Google Workspace / Gmail | Shared privately with evaluators — see "Live Demo & Judge Testing Guide" |
-| **n8n Orchestration Plane** | ✅ Implemented | n8n Cloud | 9 Workflows Active (WF-00 to WF-06, WF-08, WF-09) |
-| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 24 Tables + 59 Atomic RPCs, currency: PKR |
+| **n8n Orchestration Plane** | ✅ Implemented | n8n Cloud | 7 of 9 workflows active. WF-05 is **retired** (superseded by the `OPS-` email gate); WF-08 is deactivated (folded into WF-00). |
+| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 27 tables + 70 `SECURITY DEFINER` RPCs, currency: PKR |
 | **Fraud Scoring Engine** | ✅ Implemented | Python FastAPI Microservice | `POST /assess-fraud` — deterministic, 4 rules |
 | **Interest, Statements & Reconciliation** | ✅ Implemented | Python FastAPI Microservice | `/accrue-interest`, `/project-interest`, `/generate-statement`, `/reconcile` |
 | **Reversals & Debt Tracking** | ✅ Implemented | Supabase RPCs + WF-06 | Chargeback with partial clawback; shortfall booked as a receivable, never a negative balance |
 | **Disputes** | ✅ Implemented | n8n (WF-00) + Supabase | Unilateral to raise, co-holder input collected, always resolved by a human |
 | **Self-Service Account Opening** | ✅ Implemented | n8n (WF-00) + Supabase Auth Admin API | Single, joint and guardian-supervised minor accounts; date of birth required |
 | **Joint Account Invitations** | ✅ Implemented | n8n (WF-00, WF-08) + Supabase | 5-minute accept/decline window, auto-expiry |
-| **Money-In: Deposits & Loans** | ✅ Implemented | n8n (WF-00, WF-05) + Supabase Treasury account | Self-service deposits (capped), loans ≤ Rs 200k instant, ≤ Rs 2M human-reviewed |
+| **Money-In: Deposits & Loans** | ✅ Implemented | n8n (WF-00) + Supabase Treasury account | Self-service deposits (capped), loans ≤ Rs 200k instant, ≤ Rs 2M human-reviewed |
 | **Public RAG Support Chatbot** | ✅ Implemented | n8n (WF-04) | Answers anyone, not just customers |
-| **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | `banking-policy-index` (3072-dim). Namespaces: `banking_policy` (live), `banking_policy_v2` (staged from Drive), `fraud_patterns` (10 typologies) — see [`docs/policy-documents/`](docs/policy-documents/) |
+| **Policy RAG Vector Search** | ✅ Implemented, seeded & verified | Pinecone Vector Database | `banking-policy-index` (3072-dim). Namespaces: **`banking_policy_v2` (live, fed from Google Drive)**, `banking_policy` (rollback target), `fraud_patterns` (10 typologies) — see [`docs/policy-documents/`](docs/policy-documents/) |
+| **Bank Staff & Operations Roles** | ✅ Implemented | Supabase `bank_staff` + n8n (WF-00) | Staff are identified from the database, never a hardcoded address. An **administrator** alone can credit an account or admit a new operator; operators decide loans, resolve disputes and answer approvals. Joining is by pass phrase and requires administrator approval; a customer address can never be staff. |
 | **LLM Support Drafting** | ✅ Implemented | Groq Cloud | `openai/gpt-oss-safeguard-20b` |
 | **Text Embeddings Engine** | ✅ Implemented | Google Gemini API | `gemini-embedding-001` |
-| **Human Approval Queue** | ✅ Implemented | Dedicated ops Gmail inbox | Operator replies APPROVE / REJECT to a referenced email; `POST /webhook/approve-draft` and `/webhook/approve-loan` remain as a fallback |
+| **Human Approval Queue** | ✅ Implemented | Dedicated ops Gmail inbox | An operator replies `APPROVE` / `REJECT` to an email carrying an `OPS-` code, or sends the code in a fresh message. `list pending approvals` returns the queue when an alert email goes astray. The old `/webhook/approve-draft` and `/webhook/approve-loan` endpoints are **retired**, not a fallback. |
 
 ---
 
@@ -93,7 +94,7 @@ flowchart TD
         RAG -->|Grounded & Confident >= 0.7| DIRECT[WF-04 Sends Answer Directly]
         DIRECT --> B
         RAG -->|Not Grounded / Low Confidence| DB_DRAFT
-        DB_DRAFT -->|Pending Review| WF5[WF-05 Human Approval Gate]
+        DB_DRAFT -->|Pending Review| WF5[OPS- code emailed to ops mailbox]
         OPERATOR[Ops Specialist] -->|Replies APPROVE / REJECT to the ops inbox| WF0
         WF5 -->|Update Status & Send Email| B
         WF0_BAL -->|Direct Reply| B
@@ -254,7 +255,7 @@ Anyone can ask Digital Bank a policy question by email — you don't need to be 
 3. **The confidence fork** — this is the part that changed after an early design mistake (see `docs/decisions.md` → Session 5):
    - **Grounded and confident (`grounded=true`, `confidence >= 0.7`)**: WF-04 sends the answer to the customer **directly**. No human step. The case is marked `answered`.
    - **Not grounded, low confidence, or an agent error**: the draft is written to `support_case_drafts` (`human_review_state = 'pending'`), the case is marked `awaiting_human_review`, and the customer gets a receipt saying a specialist will follow up — never a guess presented as fact.
-4. **Human Gate** — only for the second path above. The draft is queued as an `ops_approvals` row and emailed to the ops mailbox with an `OPS-XXXXXXXX` code. The specialist replies **APPROVE** to send the draft as it stands, **APPROVE** plus a `NOTE:` line to send different wording instead, or **REJECT** to close the case without emailing the customer. (`POST /webhook/approve-draft` on WF-05 still works and remains available as a fallback.)
+4. **Human Gate** — only for the second path above. The draft is queued as an `ops_approvals` row and emailed to the ops mailbox with an `OPS-XXXXXXXX` code. The specialist replies **APPROVE** to send the draft as it stands, **APPROVE** plus a `NOTE:` line to send different wording instead, or **REJECT** to close the case without emailing the customer. The reply can be a fresh email rather than a reply-to, as long as it carries the code. If the alert email goes astray, `list pending approvals` returns the queue.
 
 Human review exists for what's genuinely ambiguous or unanswerable from policy — not as a bottleneck on every question a confident, grounded model could already answer correctly.
 
@@ -284,7 +285,7 @@ Every account used to open at Rs 0.00 with no way to fund it. Fixed with a real,
 
 - **`TREASURY-MAIN`**: an internal account (never customer-owned, never reachable by any email-authenticated intent) holding Rs 500,000,000 of the bank's own capital — the counterparty for every deposit and loan disbursement, via the same `process_money_movement()` primitive `execute_transfer()` uses. Nightly reconciliation checks it like any other account.
 - **Self-service deposits**: `deposit_funds` RPC, capped at Rs 50,000/request and 3/account/24h — a claimed deposit by email is inherently unverifiable, so it's bounded rather than escalated to a human.
-- **Loans**: `apply_for_loan` at a flat 10% interest rate. Up to Rs 200,000 → auto-approved and disbursed instantly. Up to a Rs 2,000,000 ceiling → queued to the ops mailbox with an `OPS-XXXXXXXX` code and approved or declined by reply (see "Human Approval by Email" above; `/webhook/approve-loan` on WF-05 remains as a fallback). Repayment happens automatically via a standing order, same mechanism as any other recurring payment. One open loan per customer at a time, and a minor account holder cannot take one out at all.
+- **Loans**: `apply_for_loan` at a flat 10% interest rate. Up to Rs 200,000 → auto-approved and disbursed instantly. Up to a Rs 2,000,000 ceiling → queued to the ops mailbox with an `OPS-XXXXXXXX` code and approved or declined by reply (see "Human Approval by Email" above). Repayment happens automatically via a standing order, same mechanism as any other recurring payment. One open loan per customer at a time, and a minor account holder cannot take one out at all.
 
 Full design and the two bugs it took to get here (a reconciliation-breaking genesis-funding mistake, and a pair of CHECK-constraint violations that had silently broken the RAG auto-answer feature since it was written): [`docs/policies.md`](docs/policies.md) and [`docs/decisions.md`](docs/decisions.md) → Session 7.
 
@@ -299,10 +300,10 @@ Full design and the two bugs it took to get here (a reconciliation-breaking gene
 | [`WF-02-standing-order-scheduler.json`](n8n/workflows/WF-02-standing-order-scheduler.json) | Standing Orders | Cron (Hourly) | Finds due recurring transfers (`next_execution_at <= NOW()`), calls `execute_standing_order` RPC. |
 | [`WF-03-fraud-hold.json`](n8n/workflows/WF-03-fraud-hold.json) | Fraud Hold Processor | Webhook (`/webhook/assess-fraud`) | Evaluates Python service response. Places full account hold via `place_account_hold` RPC if fraud detected. |
 | [`WF-04-rag-support-case.json`](n8n/workflows/WF-04-rag-support-case.json) | RAG Policy Support | Sub-workflow + webhook (`/webhook/support-case`) | Queries Pinecone policy vectors, drafts answer via Groq LLM. Sends grounded/confident answers directly; queues everything else in `support_case_drafts` for human review. Open to non-customers too. |
-| [`WF-05-human-approval-gmail.json`](n8n/workflows/WF-05-human-approval-gmail.json) | Human Approval Gate | Webhook (`/webhook/approve-draft`, `/webhook/approve-loan`) | Two independent webhook triggers: RAG cases WF-04 couldn't confidently answer, and loan applications over Rs 200,000. Operator approves/edits/rejects, dispatches email reply via Bank Gmail. |
+| [`WF-05-human-approval-gmail.json`](n8n/workflows/WF-05-human-approval-gmail.json) | Human Approval Gate | **Retired — unpublished** | The original HTTP approval gate. Superseded when approvals moved to email; the `OPS-` reference-code flow in WF-00 does all of it. Unpublished in Session 12 because `/webhook/approve-loan` was a live, unauthenticated endpoint that could approve a loan and disburse funds. Kept in the repo as history; do not reactivate. |
 | [`WF-06-reconciliation.json`](n8n/workflows/WF-06-reconciliation.json) | Ledger Reconciliation | Cron (Midnight UTC) | Performs system-wide debit/credit integrity audit via `run_reconciliation` RPC. Also runs `promote_minors_to_adult()`. Alerts Ops on mismatch. |
 | [`WF-08-joint-invitation-expiry-sweep.json`](n8n/workflows/WF-08-joint-invitation-expiry-sweep.json) | Joint Invitation Expiry Sweep | Schedule (every minute) — **deactivated** | Superseded: fired unconditionally every minute regardless of need, burning n8n Cloud free-tier execution quota. Kept, deactivated, for optional temporary use during a live demo. The same logic now runs opportunistically inside WF-00 at zero standing cost. |
-| [`WF-09-seed-policy-documents.json`](n8n/workflows/WF-09-seed-policy-documents.json) | Seed Policy Documents | Manual/one-time utility | Embeds the 13 PKR policy documents ([`docs/policies.md`](docs/policies.md)) into Pinecone via Gemini embeddings. Re-run after any Pinecone index recreation. |
+| [`WF-09-seed-policy-documents.json`](n8n/workflows/WF-09-seed-policy-documents.json) | Seed Policy Documents | Manual/one-time utility | Seeds the policy knowledge base. The live path is `Sync From Drive Trigger`: it clears Pinecone namespace **`banking_policy_v2`**, reads the six documents in [`docs/policy-documents/`](docs/policy-documents/) out of a Google Drive folder, and re-seeds them — so a re-run **replaces** rather than appends. `README.md` and other non-policy files are skipped. The older Code-node branches seed namespace `banking_policy` and are kept only as a rollback target. |
 
 ---
 

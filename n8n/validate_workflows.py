@@ -122,6 +122,35 @@ for file_name in sorted(files):
         else:
             print("  [OK] Security check: No embedded secrets found")
 
+        # This repository is public and the live system runs on real mailboxes.
+        # Every address here must be a reserved placeholder. A real customer's
+        # address once reached a code comment by being copied back from the live
+        # copy, which is exactly the path a checked-in secret takes.
+        PLACEHOLDER_DOMAINS = {
+            "example.com", "example.org", "example.net",
+            "yourbank.example", "test.banking",
+            "invalid.internal", "invalid.local",
+        }
+        real_addresses = sorted({
+            addr for addr, domain in
+            re.findall(r"([A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,}))", json_str)
+            if domain.lower() not in PLACEHOLDER_DOMAINS
+        })
+        if real_addresses:
+            print(f"  [FAIL] Non-placeholder email address(es): {', '.join(real_addresses)}")
+            print("         Live addresses belong in n8n, not in this repository.")
+            has_error = True
+        else:
+            print("  [OK] Every email address is a reserved placeholder")
+
+        # Control characters that look like regex escapes but are not. A shell
+        # heredoc once turned \b word boundaries into literal backspaces, which
+        # silently makes a pattern match nothing.
+        stray = sorted({repr(c) for c in json_str if c in "\x07\x08\x0b\x0c"})
+        if stray:
+            print(f"  [FAIL] Stray control character(s) in node code: {', '.join(stray)}")
+            has_error = True
+
     except Exception as e:
         print(f"  [FAIL] JSON parse error: {e}")
         has_error = True

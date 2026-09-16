@@ -871,5 +871,6 @@
     "instanceId": "16637ae8247f8416e10ae6ed27867bbe28b8dde1669ccdff61f47244a22d0b82"
   },
   "id": "7kXylLFjZDlrhdKw",
-  "tags": []
+  "tags": [],
+  "description": "Sync From Drive Trigger clears Pinecone namespace banking_policy_v2, reads the six policy documents from the Drive folder in Drive Folder Config, and re-seeds it, so a re-run replaces rather than appends. WF-04 answers from v2."
 }
