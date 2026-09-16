@@ -188,3 +188,32 @@ A leaked phrase is now an annoyance — some requests to decline — rather than
 ### An authorisation gap closed on the way past
 
 `resolve_ops_approval()` previously trusted whatever address it was handed. Only the routing layer ever called it, and only with an operator's address — but the routing layer is the part most likely to be edited by mistake, so the rule now lives in the function too.
+
+## 030: a hardening check that took production down
+
+| # | File | What it adds |
+|---|---|---|
+| 030 | `030_fix_cross_owner_execute_grants.sql` | `GRANT EXECUTE` on `is_bank_staff`, `is_bank_admin` and `resolve_destination_account` to `banking_functions`. |
+
+Migration 029 added `IF NOT public.is_bank_staff(p_decided_by_email)` to `resolve_ops_approval` — a defence-in-depth check, and the right one. It broke **every ops approval in the bank**: loans, disputes, policy answers, reversals, staff enrolment. An administrator replied `APPROVE` and nothing happened.
+
+`resolve_ops_approval` is `SECURITY DEFINER` owned by `banking_functions`, so it executes **as that role**. `is_bank_staff` was created in migration 027 owned by `postgres` and granted only to `service_role`. The call failed with `permission denied for function is_bank_staff`, every time.
+
+**A SECURITY DEFINER function runs as its owner, not its caller, so every helper it calls must be executable by that owner.** This project has functions under two owners — `banking_functions` from the early migrations, `postgres` from the ones added later — so any call crossing between them needs an explicit grant. This query finds every such call and whether it is permitted:
+
+```sql
+with mine as (
+  select p.oid, p.proname, pg_get_userbyid(p.proowner) as owner, p.prosrc
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.prokind = 'f'
+)
+select distinct c.proname as caller, c.owner as caller_owner,
+       t.proname as callee, t.owner as callee_owner,
+       has_function_privilege(c.owner, t.oid, 'execute') as permitted
+from mine c join mine t
+  on c.oid <> t.oid and c.owner <> t.owner
+ and c.prosrc like '%public.' || t.proname || '(%'
+order by permitted, caller;
+```
+
+Run it after adding any function that calls another. Eleven cross-owner calls exist today and all are permitted.
