@@ -6766,6 +6766,66 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "id": "s12d-refused-if",
+      "name": "Refused For Lack Of Rights?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2752,
+        1808
+      ],
+      "notes": "Only a rights refusal is escalated. An administrator fat-fingering their own credit is a typo, not something to report to themselves.",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $('Operator Credit Account').item.json.requires_admin }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "s12d-refused-alert",
+      "name": "Alert Admin - Credit Attempt Refused",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3024,
+        1808
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      },
+      "parameters": {
+        "sendTo": "={{ $('Operator Credit Account').item.json.admin_email }}",
+        "subject": "=Operator tried to credit an account: {{ $('Parse Ops Command').item.json.fromEmail }}",
+        "emailType": "text",
+        "message": "=An operator asked the bank to create money and was refused, because crediting an account is reserved to you.\n\nOperator: {{ $('Parse Ops Command').item.json.fromEmail }}\nWanted to credit: {{ $('Parse Ops Command').item.json.opsTarget }}\nAmount: Rs {{ ($('Parse Ops Command').item.json.opsAmount / 100).toFixed(2) }}\n{{ $('Parse Ops Command').item.json.opsNote ? ('Their reason: ' + $('Parse Ops Command').item.json.opsNote + '\n') : '' }}\nNO MONEY MOVED. They have been told to ask you.\n\nIf this was a legitimate request, issue it yourself:\n    credit {{ ($('Parse Ops Command').item.json.opsAmount / 100).toFixed(0) }} to {{ $('Parse Ops Command').item.json.opsTarget }}\n\nIf you did not expect an operator to be asking for this at all, you can remove them:\n    remove operator {{ $('Parse Ops Command').item.json.fromEmail }}\n\nDigital Bank",
+        "options": {
+          "appendAttribution": false
+        }
+      }
     }
   ],
   "connections": {
@@ -8913,6 +8973,29 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Email Ops - Credit Failed": {
+      "main": [
+        [
+          {
+            "node": "Refused For Lack Of Rights?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refused For Lack Of Rights?": {
+      "main": [
+        [
+          {
+            "node": "Alert Admin - Credit Attempt Refused",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     }
   },
