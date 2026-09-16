@@ -63,6 +63,17 @@ You get a dispute reference beginning `DSP-` straight away, so you know it is on
 
 Disputes are **always** decided by a human specialist. There is no automated dispute resolution, because "did this person actually authorise this?" is exactly the judgement a machine should not be making alone.
 
+**How long it takes.** Your `DSP-` reference is issued immediately and
+automatically, at any hour of any day. The decision itself is made by a person,
+during support hours — Monday to Friday, 9:00 AM to 6:00 PM PKT — and we aim to
+decide within **one business day** of the dispute being raised. A dispute raised
+on a Friday evening or over a weekend is therefore normally decided on the next
+working day.
+
+Your dispute stays on record until it is decided. It is never closed
+automatically by the passage of time, and you do not need to chase it to keep it
+alive. If you want an update, reply to any email from us and ask.
+
 **On a joint account** there is an explicit rule about who gets a say:
 
 - **Raising is unilateral.** Any one holder can raise a dispute without the others' permission. Reporting suspected fraud should never wait on someone else's reply.

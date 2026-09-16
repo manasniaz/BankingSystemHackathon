@@ -457,3 +457,36 @@ Reading the execution rather than guessing at it: retrieval had worked perfectly
 **Verified.** The same question, through the live agent against live Pinecone: `grounded: true`, `confidence: 0.95`, `citations: ["doc_payments_and_transfers"]`, `needs_human: false`, auto-sent — and it now answers the third part the old version ignored, naming the section the figure is published under. Regression-tested in the same pass: a genuinely uncovered topic (credit cards) still escalates with the canned wording and no citations; a refund complaint still escalates, but now hands the operator a cited draft instead of a shrug. End-to-end against the live database, the resulting row reads `threshold_exceeded: true`, `human_review_state: approved`, `rag_doc_ids: ["doc_payments_and_transfers"]` as a real array.
 
 **What this says about the gate.** Nothing here was a retrieval failure, which is where suspicion naturally falls first — and where I would have pointed had I answered from the symptom instead of the execution log. The retrieval layer has been sound throughout. Every fault was in how the system graded and handled an answer it had already produced correctly. A confidence score printed next to a contradictory sentence is a good signal that the two are measuring different things.
+
+### Session 12, fifth pass: the agent loop was never bounded
+
+A customer sent six numbered policy questions. The bank answered two, wrote "3. The policy does not cover any additional information beyond the above" to stand for the rest, and sent it — grounded, confidence 0.95, no human needed. Four of those six were fully covered by our documents. It had searched twice, both times about account opening, and never looked for closure, charges, unauthorised transactions or disputes.
+
+**The cap was the cause, and every attempt to raise it was worse.** Rule (3) read "call the Policy Knowledge Base tool AT MOST TWICE... do not call it a third time under any circumstances", written after an early crash where the agent looped against an empty Pinecone index. Two searches cannot cover six topics. What followed is worth recording precisely, because the lesson is not the one I expected:
+
+| Wording | Searches actually made | Result |
+|---|---|---|
+| "AT MOST TWICE... not a third time" | 2, every run | works, ~5s |
+| "at most 6 searches in total" | 7 | rate limited |
+| "AT MOST 4... group related topics" | 7 | rate limited |
+| "AT MOST 3... each search costs real time" | 7 | rate limited |
+| "AT MOST THREE TIMES... not a fourth time" | **31** | 60 LLM calls, 56s |
+
+The model follows a *prohibition* ("do not call it a third time under any circumstances") and ignores a *budget* ("at most 3"). Phrasing that reads as equivalent to a person is not equivalent to this model, and no amount of reasoning about the prompt would have told me which was which — only running it did.
+
+**`maxIterations` does not bind this node.** Setting `options.maxIterations` to 8 and then 12 changed nothing; the 31-search run happened with it set to 8. So there was nothing inside the agent limiting the loop at all, and the only real bound was a sentence in the prompt. That is a bad place for a system's only safety limit to live.
+
+**Retrying a runaway restarts the runaway.** `retryOnFail` with `maxTries: 3` at 3s apart turned one runaway into three, which is how a single email came to occupy the workflow for **3 minutes 49 seconds** before being cancelled by hand. Retry is now off: the error output already leads somewhere sensible, so it goes there on the first failure.
+
+**Three bounds now exist where there were none.** The proven prohibition wording, retry disabled, and `executionTimeout: 120` on the workflow itself — the last of these being the only one that does not depend on a model's cooperation or a node option being honoured. No execution can sit for minutes again regardless of what the agent does.
+
+**A guard for the original defect, independent of the prompt.** `Parse Agent Draft Output` now counts the numbered questions in the customer's email and refuses to auto-send a draft that does not reach the last number, forcing it to a human instead. Neither existing guard could see this failure: the citation guard checks that an answer points at something, and it did; the threshold checks how sure the model is, and it was sure — correctly, about the third of the question it had read. **Confidence says nothing about coverage.** Tested against the real email and the real bad draft before deploying.
+
+**What I did to the quota, and what it cost.** The 60-call runaway exhausted the Groq free-tier allowance, so the last several verification runs failed with "The service is receiving too many requests from you" rather than on their merits. That makes a config failure and a quota failure look identical from the outside, and I could not tell them apart until I read the error. The final configuration retrieved the right documents with three well-chosen broad queries — eligibility, maintenance charges, unauthorised transactions and disputes — and then died on the rate limit. It needs one clean run once the window resets to be called verified, and until then it is not.
+
+**Two genuine content gaps, separate from the bug.** Of the six questions, four were answerable from documents that already existed. Two were not, and no amount of fixing retrieval would have helped:
+
+- **Account maintenance and service charges.** Nothing anywhere stated what we charge to hold an account — not because there is an undisclosed fee, but because "nothing" had never been written down. Verified against the schema first: no migration charges a maintenance, monthly, dormancy or closure fee. Now stated explicitly, with the stronger commitment that the fee tables are exhaustive and a charge not listed is not made.
+- **Dispute turnaround.** Only inferable by combining "disputes are decided by a human" in document 05 with "human-reviewed replies usually within one business day" in document 06. Now stated in the document about disputes, where someone asking the question will actually find it, along with the fact that a dispute is never closed by the passage of time.
+
+**And a newsletter that cost us an LLM call.** A Pinecone marketing email from `community@trypinecone.com` passed the automated-sender filter, opened a support case, and spent a Groq call replying "I didn't see a specific question in it." The filter only ever inspected the address. Bulk mail announces itself in its headers — a human writing to their bank does not send `List-Unsubscribe` — so that is now the primary test, written so that it is simply false if this Gmail node version does not surface headers rather than throwing. The address list was widened only to local parts no personal banking customer would write from; `info@`, `hello@`, `team@` and `contact@` were deliberately left out, because a false positive here silently ignores a real customer, which is far worse than a newsletter costing one call.

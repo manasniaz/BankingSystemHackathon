@@ -83,6 +83,17 @@ If you genuinely want to send the same amount to the same person again, send a n
 | Partner network ATMs in Pakistan | Rs 25 per withdrawal |
 | Non-partner ATMs | Rs 50 per withdrawal |
 
+## 6a. Account maintenance and service charges
+
+**There is no account maintenance fee, no monthly or annual service charge, no
+minimum-balance fee, no dormancy fee and no account-closure fee.** Holding an
+account with us costs nothing.
+
+The tables in sections 5 and 6 above are the complete list of charges this bank
+makes. **If a charge is not listed in this document, we do not make it.** We will
+not introduce a charge and apply it to an existing account without telling you
+first.
+
 ## 7. Standing orders (recurring payments)
 
 A standing order is a transfer that repeats on a schedule. They are created automatically when a loan is disbursed, to collect the monthly repayment.

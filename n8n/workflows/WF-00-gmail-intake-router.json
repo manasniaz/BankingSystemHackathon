@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\n\n// Gmail Trigger v1.4 returns capitalised header fields: From, Subject, To\n// Try every known shape so this works across node versions.\nlet rawFrom = item.From || item.from || '';\n\n// Some versions nest headers under payload.headers\nif (!rawFrom && item.payload && Array.isArray(item.payload.headers)) {\n  const h = item.payload.headers.find(x => String(x.name).toLowerCase() === 'from');\n  if (h) rawFrom = h.value;\n}\n\nlet fromEmail = '';\nif (rawFrom && typeof rawFrom === 'object' && rawFrom.address) {\n  fromEmail = rawFrom.address;\n} else if (typeof rawFrom === 'string') {\n  const match = rawFrom.match(/<([^>]+)>/);\n  fromEmail = match ? match[1] : rawFrom;\n}\nfromEmail = String(fromEmail).trim().toLowerCase();\n\nlet subject = item.Subject || item.subject || '';\nif (!subject && item.payload && Array.isArray(item.payload.headers)) {\n  const h = item.payload.headers.find(x => String(x.name).toLowerCase() === 'subject');\n  if (h) subject = h.value;\n}\nsubject = String(subject || 'No Subject').trim();\n\nconst bodyText = String(item.text || item.textPlain || item.snippet || item.body || '').trim();\nconst messageId = item.id || item.messageId || ('msg_' + Date.now());\nconst threadId = item.threadId || messageId;\n\nif (!fromEmail) {\n  throw new Error('Could not extract sender email from Gmail trigger payload. Keys seen: ' + Object.keys(item).join(', '));\n}\n\nreturn [{\n  json: {\n    fromEmail,\n    subject,\n    bodyText,\n    messageId,\n    threadId,\n    rawFrom: String(rawFrom)\n  }\n}];"
+        "jsCode": "const item = $input.first().json;\n\n// Gmail Trigger v1.4 returns capitalised header fields: From, Subject, To\n// Try every known shape so this works across node versions.\nlet rawFrom = item.From || item.from || '';\n\n// Some versions nest headers under payload.headers\nif (!rawFrom && item.payload && Array.isArray(item.payload.headers)) {\n  const h = item.payload.headers.find(x => String(x.name).toLowerCase() === 'from');\n  if (h) rawFrom = h.value;\n}\n\nlet fromEmail = '';\nif (rawFrom && typeof rawFrom === 'object' && rawFrom.address) {\n  fromEmail = rawFrom.address;\n} else if (typeof rawFrom === 'string') {\n  const match = rawFrom.match(/<([^>]+)>/);\n  fromEmail = match ? match[1] : rawFrom;\n}\nfromEmail = String(fromEmail).trim().toLowerCase();\n\nlet subject = item.Subject || item.subject || '';\nif (!subject && item.payload && Array.isArray(item.payload.headers)) {\n  const h = item.payload.headers.find(x => String(x.name).toLowerCase() === 'subject');\n  if (h) subject = h.value;\n}\nsubject = String(subject || 'No Subject').trim();\n\nconst bodyText = String(item.text || item.textPlain || item.snippet || item.body || '').trim();\nconst messageId = item.id || item.messageId || ('msg_' + Date.now());\nconst threadId = item.threadId || messageId;\n\nif (!fromEmail) {\n  throw new Error('Could not extract sender email from Gmail trigger payload. Keys seen: ' + Object.keys(item).join(', '));\n}\n\nfunction headerValue(name) {\n  const want = String(name).toLowerCase();\n  if (item.headers && typeof item.headers === 'object') {\n    for (const k of Object.keys(item.headers)) {\n      if (k.toLowerCase() === want) return String(item.headers[k] || '');\n    }\n  }\n  if (item.payload && Array.isArray(item.payload.headers)) {\n    const h = item.payload.headers.find(x => String(x.name).toLowerCase() === want);\n    if (h) return String(h.value || '');\n  }\n  return '';\n}\n\n// Any one of these marks mail sent to a list rather than written to us.\nconst isBulkMail = Boolean(\n  headerValue('list-unsubscribe') ||\n  headerValue('list-id') ||\n  /^(bulk|list|junk)$/i.test(headerValue('precedence').trim()) ||\n  /auto-(generated|replied|notified)/i.test(headerValue('auto-submitted'))\n);\n\nreturn [{\n  json: {\n    fromEmail,\n    subject,\n    bodyText,\n    messageId,\n    threadId,\n    rawFrom: String(rawFrom),\n    isBulkMail\n  }\n}];"
       },
       "id": "b77aaadf-4cac-4cba-a613-07db9a22066f",
       "name": "Extract Email Metadata",
@@ -4495,7 +4495,7 @@
             {
               "id": "auto-local-part",
               "leftValue": "={{ $json.fromEmail }}",
-              "rightValue": "^(no-?reply|noreply|donotreply|do-not-reply|do_not_reply|mailer-daemon|postmaster|bounces?|notifications?|alerts?|automated|auto-confirm|support-noreply|security-noreply)@",
+              "rightValue": "^(no-?reply|noreply|donotreply|do-not-reply|do_not_reply|mailer-daemon|postmaster|bounces?|notifications?|alerts?|automated|auto-confirm|support-noreply|security-noreply|newsletters?|marketing|digest|campaign|mailer|community|updates|news)@",
               "operator": {
                 "type": "string",
                 "operation": "regex"
@@ -4517,6 +4517,16 @@
               "operator": {
                 "type": "string",
                 "operation": "regex"
+              }
+            },
+            {
+              "id": "auto-bulk-headers",
+              "leftValue": "={{ $json.isBulkMail }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               }
             }
           ]
