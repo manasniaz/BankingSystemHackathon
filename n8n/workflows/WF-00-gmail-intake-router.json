@@ -970,7 +970,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"p_profile_id\": \"{{ $json.profile_id }}\",\n  \"p_account_type\": \"{{ $json.account_type }}\",\n  \"p_currency\": \"USD\",\n  \"p_holder_type\": \"adult\"\n}",
+        "jsonBody": "={\n  \"p_profile_id\": \"{{ $json.profile_id }}\",\n  \"p_account_type\": \"{{ $json.account_type }}\",\n  \"p_currency\": \"PKR\",\n  \"p_holder_type\": \"adult\"\n}",
         "options": {
           "response": {
             "response": {
@@ -992,7 +992,8 @@
           "id": "tJhpbtV5Vin0bmon",
           "name": "Supabase account"
         }
-      }
+      },
+      "notes": "Currency is PKR. This node said USD until Session 12 -- a leftover from before the PKR conversion, which produced accounts that could never send or receive anything. accounts.currency now has a CHECK so it cannot recur."
     },
     {
       "parameters": {

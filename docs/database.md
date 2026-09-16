@@ -230,3 +230,17 @@ Run it after adding any function that calls another. Eleven cross-owner calls ex
 **032.** The customer/staff separation was enforced in one direction only. Migration 027 stopped a staff address becoming a customer; nothing stopped a customer address being activated as staff. That is reachable in ordinary use — an operator is removed, opens an account (the documented behaviour for a removed address), and is later re-activated. They would then be both, which is exactly the combination the rule exists to prevent, because an operator can act on any account including their own.
 
 `enrol_bank_staff()` already refused it on the way in. The trigger is the floor under that for any path writing the table directly.
+
+## 033: accounts are PKR only
+
+| # | File | What it adds |
+|---|---|---|
+| 033 | `033_accounts_are_pkr_only.sql` | `CHECK (currency = 'PKR')` on `accounts`, and a relabel of the one account created in USD. |
+
+WF-00's `Open Additional Account for Existing Customer` hardcoded `"p_currency": "USD"` — a leftover from before migration 005 converted this bank to PKR. The new-customer path was updated at the time; this one was missed, and nothing caught it because `accounts.currency` had no constraint.
+
+An existing customer who opened a second account therefore got a **USD account at a PKR-only bank**. `process_money_movement()` refuses a currency mismatch, so the account could never send or receive anything — it was dead on arrival, and the failure surfaced far from its cause, as `Cross-currency transfers are not supported (PKR to USD)` on some later transfer.
+
+Fixing the node fixes one instance. The constraint makes the class impossible: every policy document says this bank is PKR-only, and now the schema says it too. Two further `|| 'USD'` fallbacks in the WF-01 and WF-03 payload validators were corrected at the same time.
+
+The one account created this way had no ledger entries and a zero balance, so correcting its denomination was a relabel rather than a revaluation — there was nothing denominated in it to convert.

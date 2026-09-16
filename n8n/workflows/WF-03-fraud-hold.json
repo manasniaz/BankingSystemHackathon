@@ -31,7 +31,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nconst accountId = body.account_id || 'aa000000-0000-0000-0000-000000000001';\nconst amountNum = Number(body.amount) || 1000;\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      account_id: String(accountId).trim(),\n      amount: amountNum,\n      currency: String(body.currency || 'USD').trim().toUpperCase(),\n      profile_id: body.profile_id ? String(body.profile_id).trim() : null,\n      transaction_context: body.transaction_context || {}\n    }\n  }\n}];"
+        "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\nconst accountId = body.account_id || 'aa000000-0000-0000-0000-000000000001';\nconst amountNum = Number(body.amount) || 1000;\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      account_id: String(accountId).trim(),\n      amount: amountNum,\n      currency: String(body.currency || 'PKR').trim().toUpperCase(),\n      profile_id: body.profile_id ? String(body.profile_id).trim() : null,\n      transaction_context: body.transaction_context || {}\n    }\n  }\n}];"
       },
       "id": "ae99bab2-53ca-4424-b03b-4a4ae7b62664",
       "name": "Validate Request Payload",
