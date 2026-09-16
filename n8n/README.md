@@ -145,8 +145,8 @@ The database identifies customers by their registered email in the `profiles` ta
   - `bob@test.banking` → Profile ID `b0000000-0000-0000-0000-000000000002` (Account `TEST-BOB-001`, Balance: Rs 50,000.00)
   - `charlie@test.banking` → Profile ID `c0000000-0000-0000-0000-000000000003` (Joint Account `TEST-JOINT-001`)
 
-> **To test with your REAL Gmail account (e.g. `tester@gmail.com`):**
-> Update the `profiles` table in Supabase to set `email = 'tester@gmail.com'` for Alice's profile ID (`a0000000-0000-0000-0000-000000000001`). When you send an email from `tester@gmail.com` to the Bank Gmail, n8n automatically extracts the actual sender, resolves Alice's profile, and authorizes access to `TEST-ALICE-001`.
+> **To test with your REAL Gmail account (e.g. `tester@example.com`):**
+> Update the `profiles` table in Supabase to set `email = 'tester@example.com'` for Alice's profile ID (`a0000000-0000-0000-0000-000000000001`). When you send an email from `tester@example.com` to the Bank Gmail, n8n automatically extracts the actual sender, resolves Alice's profile, and authorizes access to `TEST-ALICE-001`.
 >
 > To test **without** any pre-existing profile at all (self-service account opening, or a public policy question), just email from any address — see Tests 8 and 4 below.
 

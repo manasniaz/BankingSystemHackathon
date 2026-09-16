@@ -155,6 +155,55 @@ for file_name in sorted(files):
         print(f"  [FAIL] JSON parse error: {e}")
         has_error = True
 
+# --------------------------------------------------------------------------
+# Repository-wide address scan.
+#
+# A real customer's address has reached this repository twice: once in a node
+# comment carried back from the live copy, once in a docs paragraph written
+# while explaining something else. Both times it was caught by grep afterwards
+# rather than by anything that runs. The live system uses real mailboxes and
+# this repository is public, so the check belongs here, covering everything.
+# --------------------------------------------------------------------------
+PLACEHOLDER_DOMAINS = {
+    "example.com", "example.org", "example.net",
+    "yourbank.example", "test.banking",
+    "invalid.internal", "invalid.local",
+    # Named in the automated-sender filter, and deliberately quoted in docs.
+    "accounts.google.com", "google.com", "googlemail.com.invalid",
+    "amazonses.com", "sendgrid.net", "mailgun.org",
+    "noreply.anthropic.com",
+}
+SCAN_EXTS = (".md", ".py", ".sql", ".json", ".txt", ".yml", ".yaml")
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+addr_re = re.compile(r"([A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,}))")
+leaks = {}
+
+for dirpath, dirnames, filenames in os.walk(repo_root):
+    dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+    for fn in filenames:
+        if not fn.endswith(SCAN_EXTS):
+            continue
+        full = os.path.join(dirpath, fn)
+        try:
+            with open(full, "r", encoding="utf-8") as fh:
+                content = fh.read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for addr, domain in addr_re.findall(content):
+            if domain.lower().rstrip(".") not in PLACEHOLDER_DOMAINS:
+                leaks.setdefault(os.path.relpath(full, repo_root), set()).add(addr)
+
+print("\n--- Repository-wide address scan ---")
+if leaks:
+    for path in sorted(leaks):
+        print(f"  [FAIL] {path}: {', '.join(sorted(leaks[path]))}")
+    print("         Real addresses belong in n8n and Supabase, not in this repository.")
+    has_error = True
+else:
+    print("  [OK] No real email addresses committed anywhere in the repository")
+
 print("\n========================================")
 if has_error:
     print("VALIDATION RESULT: FAILED")

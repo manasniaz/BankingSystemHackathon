@@ -244,3 +244,28 @@ An existing customer who opened a second account therefore got a **USD account a
 Fixing the node fixes one instance. The constraint makes the class impossible: every policy document says this bank is PKR-only, and now the schema says it too. Two further `|| 'USD'` fallbacks in the WF-01 and WF-03 payload validators were corrected at the same time.
 
 The one account created this way had no ledger entries and a zero balance, so correcting its denomination was a relabel rather than a revaluation — there was nothing denominated in it to convert.
+
+## 034: closed accounts hold no money
+
+| # | File | What it adds |
+|---|---|---|
+| 034 | `034_closed_accounts_hold_no_money.sql` | `CHECK (status <> 'closed' OR balance = 0)` on `accounts`. |
+
+`run_reconciliation()` checks a cached balance against the ledger for **active and frozen accounts only**, and says why in a comment: a closed account's balance "is definitionally 0".
+
+That was a comment, not a guarantee. `close_account()` refuses to close an account holding money, so the balance is zero at the moment of closing — but nothing stopped a balance being written to an already-closed account *afterwards*, and the nightly check would not have looked. Money could have sat on a closed account indefinitely with no check noticing, which is the precise failure reconciliation exists to catch.
+
+The system-wide debits-equal-credits check still covered every ledger line, closed accounts included, so a forged *ledger entry* was always caught. What was uncovered was the cached `balance` column on a closed row.
+
+The schema now guarantees what reconciliation assumes. That is what makes skipping those rows safe rather than merely convenient — and it is the same move as migration 033: turn an assumption the code relies on into something the database enforces.
+
+**Note on the bank's own accounts.** `BANK-CAPITAL` and `BANK-EQUITY-001` carry a zero balance against a large negative ledger sum. That is correct and not drift: they are the source the bank was funded from, `CHECK (balance >= 0)` forbids representing that as a negative balance, and both are `closed` so the per-account check skips them. Every rupee they issued is still accounted for by the system-wide check.
+
+## A note on the applied-versus-committed migration list
+
+Supabase's migration history and this directory are not a line-for-line match, and that is expected rather than drift:
+
+- **`001` and `002` are not in the applied history.** They were run before the project started using the migration system. Their objects exist; only the bookkeeping is absent.
+- **Two entries are in the applied history with no file here** — `grant_joint_invitations_table_to_banking_functions` and `fix_respond_to_joint_invitation_inviter_email`. Both were hotfixes applied live and then folded into the numbered files: the grant is in `005`, and `respond_to_joint_invitation` is redefined by `016`, which was applied *after* the hotfix and supersedes it.
+
+A fresh deploy running `001` through `034` in order reaches the same schema as the live database. Verified by checking each live-only entry against the committed files rather than assuming.

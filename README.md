@@ -468,7 +468,7 @@ This repository intentionally does not publish the live Bank Gmail inbox address
 >
 > *To run tests with your own email address:* In Supabase SQL Editor, update Alice's email to your personal email address:
 > ```sql
-> UPDATE profiles SET email = 'your.email@gmail.com' WHERE id = 'a0000000-0000-0000-0000-000000000001';
+> UPDATE profiles SET email = 'you@example.com' WHERE id = 'a0000000-0000-0000-0000-000000000001';
 > ```
 
 ---
