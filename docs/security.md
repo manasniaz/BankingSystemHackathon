@@ -12,7 +12,7 @@
 
 - `ledger_entries` and `audit_log` are **append-only**: a trigger (`prevent_modification_append_only()`) raises an exception on any `UPDATE` or `DELETE`, regardless of role.
 - `accounts.balance` has `CHECK (balance >= 0)` — the schema itself refuses to store a negative balance; see `decisions.md` #14 for why chargeback-into-debt was scoped out rather than special-cased around this.
-- All 15 tables have RLS **enabled**. Four internal-only tables (`audit_log`, `idempotency_keys`, `reconciliation_runs`, `support_case_drafts`) had RLS enabled with no policies — functionally already deny-all for non-bypassing roles, but migration `003_rls_explicit_deny_policies.sql` makes that explicit so it isn't just incidental.
+- All **27** tables have RLS **enabled**, and every one of them now carries an explicit policy. Seven were at one time "RLS enabled, no policies" — functionally already deny-all for non-bypassing roles, but incidental rather than stated. `003_rls_explicit_deny_policies.sql` covered the first four (`audit_log`, `idempotency_keys`, `reconciliation_runs`, `support_case_drafts`); `035_rls_explicit_deny_on_staff_tables.sql` covered the three added later by the operations work (`bank_staff`, `staff_enrolment_attempts`, `staff_passphrase`). That last group matters most: `staff_passphrase` holds the bcrypt credential granting operator access, and `bank_staff` decides who may credit an account from the treasury.
 - Every financial RPC (`execute_transfer`, `execute_standing_order`, `place_account_hold`, `release_account_hold`, `close_account`, etc.) is `SECURITY DEFINER`, owned by `banking_functions`, and does its own authorization/validation inside the function body rather than trusting the caller.
 
 ## Credential handling

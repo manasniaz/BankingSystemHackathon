@@ -33,7 +33,7 @@ Modern banking demands seamless email interaction without sacrificing financial 
 |---|---|---|---|
 | **Bank Gmail Intake** | ✅ Implemented | Live Google Workspace / Gmail | Shared privately with evaluators — see "Live Demo & Judge Testing Guide" |
 | **n8n Orchestration Plane** | ✅ Implemented | n8n Cloud | 7 of 9 workflows active. WF-05 is **retired** (superseded by the `OPS-` email gate); WF-08 is deactivated (folded into WF-00). |
-| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 27 tables + 70 `SECURITY DEFINER` RPCs, currency: PKR |
+| **Financial Database & Ledger** | ✅ Implemented | Supabase Cloud PostgreSQL | 27 tables + 71 `SECURITY DEFINER` RPCs, currency: PKR |
 | **Fraud Scoring Engine** | ✅ Implemented | Python FastAPI Microservice | `POST /assess-fraud` — deterministic, 4 rules |
 | **Interest, Statements & Reconciliation** | ✅ Implemented | Python FastAPI Microservice | `/accrue-interest`, `/project-interest`, `/generate-statement`, `/reconcile` |
 | **Reversals & Debt Tracking** | ✅ Implemented | Supabase RPCs + WF-06 | Chargeback with partial clawback; shortfall booked as a receivable, never a negative balance |

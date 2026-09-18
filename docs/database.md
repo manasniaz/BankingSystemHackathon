@@ -1,10 +1,31 @@
 # Database & Migrations
 
-The full table list, relationships, and RPC signatures live in [`architecture.md`](architecture.md) — this page is the migration history: what each file adds and why, in the order they must be applied.
+This page is the database reference: the current table list, then the migration history.
+
+[`architecture.md`](architecture.md) holds the original pre-build design and is deliberately frozen at the 15 tables that existed then — it is history, not the current schema. The two documents used to point at each other for the table list, so following either one led back to that snapshot. The current list is below.
+
+## Tables (27)
+
+| Group | Tables |
+|---|---|
+| Identity and accounts | `profiles`, `accounts`, `account_holders` |
+| Money movement | `transactions`, `ledger_entries`, `idempotency_keys`, `standing_orders` |
+| Holds and risk | `account_holds`, `fraud_assessments` |
+| Joint accounts | `joint_account_invitations`, `joint_account_actions`, `joint_account_consents` |
+| Minors | `minor_account_requests` |
+| Credit and deposits | `loans`, `account_debts` |
+| Interest | `interest_rates`, `interest_accruals` |
+| Disputes | `disputes` |
+| Operations and staff | `ops_approvals`, `bank_staff`, `staff_passphrase`, `staff_enrolment_attempts` |
+| Support assistant | `support_cases`, `support_case_drafts` |
+| Scheduling | `bank_holidays` |
+| Integrity and audit | `reconciliation_runs`, `audit_log` |
+
+All 27 have RLS enabled and an explicit policy; see [`security.md`](security.md).
 
 ## Migration order
 
-Apply these in Supabase's SQL editor, in order, against a fresh project:
+Apply these in Supabase's SQL editor, in order, against a fresh project. **There are 35 migrations.** The first eight are described in detail below because they establish the shape of the system; `009`–`035` are each prefixed with a comment block explaining what problem they solve and why, which is the authoritative account of them, and the narrative sits in [`decisions.md`](decisions.md) session by session.
 
 | # | File | What it adds |
 |---|---|---|
