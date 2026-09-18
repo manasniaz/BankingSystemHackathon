@@ -942,7 +942,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json;\nconst text = ((item.subject||'') + ' ' + (item.bodyText||'')).toLowerCase();\nlet accountType = 'checking';\nif (/\\bsavings?\\b/.test(text)) accountType = 'savings';\nreturn [{ json: { profile_id: item.profile_id, account_type: accountType, fromEmail: item.fromEmail, subject: item.subject, full_name: item.full_name } }];"
+        "jsCode": "const item = $input.first().json;\n\n// Only what the customer typed this time. The quoted thread under a reply\n// routinely contains \"savings\" or \"checking\" from an earlier message, and this\n// was the last node in the workflow still reading the whole body -- the same\n// quote-bleed that put a Gmail timestamp into someone's date of birth.\nconst own = String(item.ownText || item.bodyText || '');\nconst text = (String(item.subject || '') + ' ' + own).toLowerCase();\n\n// All three published types. 'business' was missing entirely, so anyone asking\n// for a business account was quietly given a checking one.\nlet accountType = null;\nif (/\\bbusiness\\b/.test(text)) accountType = 'business';\nelse if (/\\bsavings?\\b/.test(text)) accountType = 'savings';\nelse if (/\\b(checking|current)\\b/.test(text)) accountType = 'checking';\n\n// What they already hold, so the reply can show it rather than silently adding\n// a near-duplicate to a pile they may have forgotten about.\nconst open = (Array.isArray(item.authorizedAccounts) ? item.authorizedAccounts : [])\n  .filter(a => a && a.status === 'active');\nconst existingList = open\n  .map(a => '    ' + a.account_number + '  (' + a.account_type + ')')\n  .join('\\n');\n\nreturn [{ json: {\n  profile_id: item.profile_id,\n  account_type: accountType || 'checking',\n  hasType: accountType !== null,\n  existingCount: open.length,\n  existingList: existingList,\n  fromEmail: item.fromEmail,\n  subject: item.subject,\n  full_name: item.full_name\n} }];"
       },
       "id": "8a1bd46b-0ca8-4d04-858d-f3f536c90a4a",
       "name": "Resolve Account Opening Details",
@@ -6965,6 +6965,65 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-type",
+              "leftValue": "={{ $json.hasType }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3c9d17b6-45ea-4f02-8b71-6d0c8a39e47f",
+      "name": "Account Type Stated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        1500
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.fromEmail }}",
+        "subject": "=RE: {{ $json.subject }} - which type of account?",
+        "emailType": "text",
+        "message": "=Hello {{ $json.full_name }},\n\nYou asked us to open an account but did not say which type, so we have not opened anything yet. You already hold {{ $json.existingCount }} account(s) with us, and we would rather ask than add one you did not mean:\n\n{{ $json.existingList }}\n\nReply with one of these and we will open it straight away:\n\n    Please open a savings account\n    Please open a checking account\n    Please open a business account\n\nThe difference that matters: a savings account earns 5.00% a year, paid monthly. Checking and business accounts earn no interest. All three are in PKR, cost nothing to hold, and have no minimum balance.\n\nIf you meant something else entirely, just reply and tell us.\n\nDigital Bank New Accounts",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "e2b48c07-9f31-4a56-bd28-704f1c93a6de",
+      "name": "Ask Which Account Type",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2608,
+        1600
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -7217,7 +7276,7 @@
       "main": [
         [
           {
-            "node": "Open Additional Account for Existing Customer",
+            "node": "Account Type Stated?",
             "type": "main",
             "index": 0
           }
@@ -9171,6 +9230,24 @@
         [
           {
             "node": "Alert Ops - Unrecognised Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Account Type Stated?": {
+      "main": [
+        [
+          {
+            "node": "Open Additional Account for Existing Customer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ask Which Account Type",
             "type": "main",
             "index": 0
           }

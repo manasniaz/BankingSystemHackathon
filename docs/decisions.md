@@ -618,3 +618,27 @@ The check reads each result through `$('Node').first().json` rather than `$json`
 **Both paths tested with every RPC pinned, so nothing ran for real.** A simulated PostgREST timeout on one job and a `success: false` on another produced exactly two findings out of five checked, correctly naming both, with the three healthy jobs ignored and the alert sent. An all-healthy run produced `anyFailed: false`, took the other branch, and did not send anything — the half that matters most, because an alert that cries wolf nightly is worse than no alert.
 
 The alert says what each failure actually costs rather than just naming the RPC, and states that the jobs are idempotent and safe to re-run by hand — so that the person reading it at 3am knows both how bad it is and what to do.
+
+### Session 13, sixth pass: an existing customer asked for an account and got a third one they did not want
+
+Execution 478. A customer already holding two checking accounts, one with Rs 313,400 in it, wrote:
+
+> Hello. I want to open an account
+
+The bank opened a **third checking account** immediately, said nothing about the two they already had, and never asked what they actually wanted.
+
+`Resolve Account Opening Details` was five lines long and had three separate defects in them:
+
+**It guessed instead of asking.** `let accountType = 'checking'` was the default whenever no type was stated. The bank's own published policy says the opposite: an existing customer "only need to say **which type** you want", which only makes sense if not saying means we ask. Guessing produced a duplicate the customer never requested, and the account is now real, numbered, and on their statement.
+
+**It read the quoted thread.** It parsed `item.bodyText` — the whole message including everything quoted underneath. Every other node that reads customer text moved to quote-stripped `ownText` after a date of birth was once parsed out of a Gmail timestamp line; this node was missed in that sweep. A reply sent under an earlier message containing the word "savings" would have opened a savings account on the strength of text the customer did not write. Demonstrated rather than asserted: reading the whole body returns `savings`, reading `ownText` returns nothing and the bank asks.
+
+**It could not see `business` at all.** Only `savings` was detected, so a customer asking for a business account was quietly given a checking one — a silently wrong product, which is worse than a refusal.
+
+**New senders are deliberately left alone.** With no accounts at all, "open an account" has one sensible reading, and the policy states plainly that a checking account is opened if the customer does not specify. The asymmetry is the whole point: the harm only exists once there is something to duplicate. Adding a confirmation step to first contact would be friction with nothing behind it.
+
+The reply lists the accounts they already hold, gives the exact wording for each of the three types, and states the one fact that actually distinguishes them — savings earns 5.00% a year, checking and business earn nothing. A customer who cannot tell the products apart is exactly the customer who writes "I want to open an account".
+
+**Verified against the real email.** Six offline cases including both the live failure and the quote-bleed case, then two live runs with account creation pinned: the exact text from execution 478 now routes to the question with `hasType: false` and `Open Additional Account for Existing Customer` never executing, while "Please open a savings account" still opens one, correctly typed as savings rather than the old checking default.
+
+**Left behind.** `ACC-A83933FD6D`, the spurious third account, still exists with a zero balance. Closing it needs the customer's own `JNT-` confirmation like any closure, so it is theirs to decide rather than something to quietly delete.
