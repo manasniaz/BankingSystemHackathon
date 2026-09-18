@@ -185,7 +185,11 @@ PLACEHOLDER_DOMAINS = {
     "noreply.anthropic.com",
 }
 SCAN_EXTS = (".md", ".py", ".sql", ".json", ".txt", ".yml", ".yaml")
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+# "private" is git-ignored and never committed: it holds local working copies
+# that legitimately contain the live mailbox (a submission guide, a cover
+# email). The scan walks the filesystem rather than the index, so it has to
+# be told, or the build fails on files that can never reach the public repo.
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "private"}
 
 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 addr_re = re.compile(r"([A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,}))")

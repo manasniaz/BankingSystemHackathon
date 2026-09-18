@@ -5,7 +5,7 @@ These six documents are the bank's published policy. They are the **source of tr
 | File | Document ID | Covers |
 |---|---|---|
 | [`01-accounts-and-eligibility.md`](01-accounts-and-eligibility.md) | `doc_accounts_and_eligibility` | Account types, opening, date of birth, minors and guardians, closure rules, account status |
-| [`02-payments-and-transfers.md`](02-payments-and-transfers.md) | `doc_payments_and_transfers` | Making transfers, atomicity and idempotency, limits, wire and ATM fees, standing orders, reversals |
+| [`02-payments-and-transfers.md`](02-payments-and-transfers.md) | `doc_payments_and_transfers` | Making transfers, atomicity and idempotency, limits, what we do not offer and what we charge, standing orders, reversals |
 | [`03-joint-accounts.md`](03-joint-accounts.md) | `doc_joint_accounts` | Joint opening, either-or vs all-signatures mandate, co-holder approval, adding/removing holders, joint closure |
 | [`04-borrowing-and-deposits.md`](04-borrowing-and-deposits.md) | `doc_borrowing_and_deposits` | Deposits and caps, loans, interest, approval thresholds, repayment, who cannot borrow |
 | [`05-security-fraud-and-disputes.md`](05-security-fraud-and-disputes.md) | `doc_security_fraud_and_disputes` | Identity, fraud scoring rules, holds and freezes, disputes, audit trail, nightly integrity checks |

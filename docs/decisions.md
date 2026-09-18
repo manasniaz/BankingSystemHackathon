@@ -524,3 +524,62 @@ WF-04 handles exactly one support case per execution: `Extract Case ID` collapse
 | Six numbered questions | split request sent, **zero LLM calls** |
 | Platinum credit card (uncovered) | escalated, no citations, canned wording |
 | Duplicate-charge complaint | escalated for a human, not auto-sent |
+
+### Session 13: the bank asked a question, got an answer, and threw it away
+
+Three defects, found by reading recent executions rather than by testing new things. Two of them had already cost a real person their account.
+
+**A new applicant answered our own question and was told we did not recognise them.** Execution 418. We asked for a date of birth; they replied with just `20/9/2000`. The date parsed correctly — `2000-09-20`, age 25, not a minor — and then `wantsOpen` came back **false**, because their reply contained no intent words, so `New Sender Route` fell through to Reject and sent the "your email address is not registered with any active customer account" notice. No account was opened. There is still no profile for that address today.
+
+This is the worst class of bug this system can have: it is not a crash, nothing errored, the execution is marked success, and every individual node did exactly what it was written to do. The classifier read one message in isolation when the meaning only existed in the exchange. Supplying a date of birth to a bank you are not registered with has exactly one meaning, so a reply that carries a detail we asked for now continues the application — **but only on a reply**, so a stranger who mentions a date in their first email is not silently enrolled. That negative case is in the test set precisely because the fix would otherwise be worse than the bug.
+
+**The catch-all told customers a human would review their message, and told no human anything.** `Route by Intent` output 13 led to `Send General Inquiry Response Email`, which promised "A customer support representative will review your message" and was a terminal node. Nothing was queued, nobody was notified, and the customer waited for a reply that was never coming. Any request the classifier could not place vanished silently with a false reassurance on top. It now carries the full list of what the bank can do, says plainly that nothing was changed on the account, and copies the operations team with the customer's original wording — so the sentence is true, and an unhandled intent becomes visible rather than invisible.
+
+**First contact was a security notice.** Someone writing to the bank for the first time received their own address read back at them and a line about sending from a registered address. Nothing about what the bank does or how to ask for it. It is now a proper welcome: how to open an account in one email, the twelve things you can ask for with the exact wording that works for each, and what we will never ask you for. The same panel goes into the new-account welcome, so it is in front of a customer at the moment they first have an account and no idea what to type.
+
+**What I deliberately did not build.** A `HELP` intent, routed to its own panel, would have been tidier. It needed an edit to a 13,172-character intent classifier and a new rule on a 13-rule Switch whose fallback index then shifts — both re-typed by hand into the cloud copy, where a single typo breaks intent routing for *every* customer email: balances, transfers, loans, all of it. The benefit was almost entirely available for free, because an unrecognised request now lands on the panel anyway. Choosing the tidier intent list would have been optimising the shape of an enum at the expense of the thing that must not break. The only cost of the simpler route is that operations also gets a copy of a help request, which is arguably useful.
+
+**Verified.** Six offline cases against the verbatim text of the failing emails, including the two negative cases that matter (a stranger mentioning a date is not enrolled; a real fee question is still a policy question). Then three live runs against the published cloud copy with the writes and sends pinned, confirming: a help request routes to the panel (`wantsHelp: true`), the exact email from execution 418 now reaches `Send New Account Welcome Email` (`isContinuation: true`), and an unclassifiable request from a real customer reaches `Alert Ops - Unrecognised Request`. Zero rows were written by the tests.
+
+**Still outstanding, and it needs a person.** The applicant from execution 418 was failed by the bank and never got an account. The fix means a fresh email from them would now work, but they have no way of knowing that. Reaching out is a message to a real member of the public, so it is the operator's call, not mine.
+
+### Session 13, second pass: the bank published a fee schedule for products it does not have
+
+An audit of the whole codebase turned up one finding that outranked everything else, and it was not a defect in any workflow.
+
+`02-payments-and-transfers.md` published an international wire fee of Rs 1,500, a Rs 500,000 daily wire limit, a domestic wire rail settling "same business day if submitted before 3:00 PM PKT", and ATM withdrawal fees of Rs 25 and Rs 50. A grep across all 34 migrations finds **no wire concept, no ATM, no card, no withdrawal and no daily limit anywhere**, and no fee is ever deducted from an account by any function. Every one of those figures described a product that does not exist.
+
+**The interesting part is that the safety machinery worked perfectly throughout.** The assistant is forbidden from inventing policy, must cite what it uses, and is forced to a human if it cites nothing. It obeyed all of that: asked for the wire fee, it retrieved the right chunk, quoted the figure exactly, cited the document, and reported confidence 0.95. The answer was faithful to its source and completely false. **Grounding guarantees fidelity to the documents, not truth** — so a false document yields a confident false answer with a citation attached, and every guard in the system reads green. Sessions 12's fourth and fifth passes were spent making the assistant answer more reliably from these documents, which in this one respect made it more reliably wrong.
+
+Fixed by making the published schedule true rather than by building wires: section 5 now lists only the internal transfer (free, instant) and the high-value scoring threshold, and states plainly that there is no daily cap. Section 6 says what the bank does *not* do — no cash, cards or ATMs; no payments to or from other institutions; no international wires or foreign currency; no overdrafts or credit cards — and that it charges nothing at all, listing the only three amounts that ever leave an account.
+
+**The same fiction had spread further than the one document**, which is what made it worth a full sweep rather than a single edit:
+
+- **The instructions panel I deployed earlier the same day** offered *"What is the fee for an international wire?"* as its worked example, in all three customer-facing emails. My own error, propagating a claim I had not checked.
+- **WF-04's system prompt** used "the fee is Rs 1,500 per outgoing wire" as its example of how to write a figure, priming the model toward exactly this fiction, and rule (1) referred to "wire limits" as a category.
+- **WF-09's legacy seed branch** still carried `doc_wire_transfer_policy` and `doc_atm_fees` verbatim. It is kept as a rollback target, but what it rolled back *to* was the fiction — a rollback to lies is not a safety net. Both documents removed, plus a 3-5 business day dispute SLA and a "visiting a branch" referral that current policy contradicts.
+- **`04-borrowing-and-deposits.md`, a live RAG document**, told customers that a loan above Rs 2,000,000 "requires a branch visit". There is no branch. It now says Rs 2,000,000 is simply the most the bank will lend, because email is the only channel and there is nowhere to refer anyone to.
+- **`docs/policies.md`** restated both fictional sections as bank policy; they are now marked superseded and untrue rather than quietly deleted, because the repository is also the record of what was wrong.
+- **Three test scripts** (the README, the n8n operator manual, and the submission guide's flagship policy test) all expected the fictional answer.
+
+Everything adjacent was verified rather than assumed, and the rest held: savings 5.00% / checking 0 / business 0 matches `interest_rates`; deposits Rs 50,000 per request and 3 per 24 hours matches `deposit_funds`; loans at 10% flat with a Rs 200,000 automatic threshold and a Rs 2,000,000 ceiling matches `apply_for_loan`. Only the wire and ATM material was invented.
+
+**Verified after the change.** The replacement flagship question — "Do you pay interest on a savings account?" — returns confidence 1.00, cites `doc_borrowing_and_deposits`, resolves and auto-sends, and every figure in the reply is true against the schema. `decisions.md` entries from earlier sessions are deliberately left as they were: they record what happened at the time, and editing them would be falsifying the log rather than fixing the bank.
+
+### Session 13, third pass: the fail-safe guarantee held at the door and not inside the room
+
+The policy documents promise that "an ambiguous answer about risk always resolves to *don't move the money*. It never fails open." That was true of the service boundary and false of the scorer.
+
+Three of the four fraud rules — the account-freeze holds check, the velocity count and the new-recipient lookup — each sat in a `try/except` that logged the error and carried on. The rule's points were silently dropped and the service returned **HTTP 200 with a lower score and `approved: true`**. Velocity (50) plus a large amount (30) is 80 and is blocked; with the velocity query erroring, the identical transfer scored 30 and was approved. A database hiccup was a fraud bypass.
+
+Only rule 1's account lookup failed correctly, by raising, because without it there is nothing to assess at all. The others were written as though a missing answer were a passing answer.
+
+**Why it raises 503 rather than scoring 100.** Scoring 100 looks like the conservative choice and is the worse one: WF-03 places a **full account freeze** at 75 or above, and only a human operator can lift it. A momentary database error would therefore lock a customer out of their own account and generate a support incident for someone who did nothing wrong. A 503 carries neither `approved` nor `fraud_assessment_id`, and n8n's fraud gate requires **both** — so the transfer is held, nothing is frozen, and a retry can succeed. That gate condition was verified before relying on it rather than assumed.
+
+Every rule is still attempted before the guard fires, so the error names all the rules that failed instead of only the first. That is the difference between a diagnosable incident and a guess.
+
+The account-holds check is fatal too, even though it is redundant today: `place_account_hold()` also sets `accounts.status = 'frozen'`, and the status check already covers it. A missed full freeze is the most serious thing this service can get wrong, and "redundant today" is precisely the assumption that breaks quietly later.
+
+**Five regression tests, and they were checked against the old code.** A regression test that passes both before and after a fix is worthless, so the fix was temporarily reverted and the tests re-run: all four failure cases failed against the original behaviour and pass against the corrected one. The fifth asserts the guard did not make the ordinary path unavailable — nine transactions in the window plus Rs 600,000 still scores 95 and is blocked on merit.
+
+**This one is not live yet.** Every other change this session went straight to n8n Cloud, but the fraud service is deployed to Railway from this repository, so the corrected scorer reaches production on the next push. Until then the live service still fails open on those three rules.

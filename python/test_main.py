@@ -187,6 +187,114 @@ class TestFraudService(unittest.TestCase):
         self.assertIn("High risk", res_json["reason"])
         self.assertEqual(res_json["fraud_assessment_id"], "assessment-uuid-789")
 
+    # =========================================================================
+    # Failing closed on a rule that could not be evaluated.
+    #
+    # These are regression tests for a real fail-open defect: the velocity,
+    # recipient-history and account-holds queries each sat in a try/except that
+    # logged and continued, so a database error silently removed that rule's
+    # points and the service returned 200 with a LOWER score and approved=true.
+    # Velocity 50 + large amount 30 = 80 and is blocked; with the velocity query
+    # erroring, the identical transfer scored 30 and was approved.
+    #
+    # The expected behaviour is 503, not a score of 100: WF-03 freezes an account
+    # at 75 or above and only a human can lift that, so scoring 100 would turn a
+    # momentary database error into a lockout for a customer who did nothing.
+    # =========================================================================
+
+    def _client_with_failing(self, failing_table, tx_count=9, amount_large=True):
+        """A Supabase mock where exactly one table's query raises."""
+        mock_supabase = MagicMock()
+
+        def table_side_effect(name):
+            t_mock = MagicMock()
+            if name == "accounts":
+                exec_mock = MagicMock()
+                exec_mock.data = [{"id": "acc-123", "status": "active", "balance": 10 ** 9}]
+                t_mock.select.return_value.eq.return_value.execute.return_value = exec_mock
+            elif name == "account_holds":
+                if failing_table == "account_holds":
+                    t_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.side_effect = RuntimeError("connection reset")
+                else:
+                    exec_mock = MagicMock()
+                    exec_mock.data = []
+                    t_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = exec_mock
+            elif name == "transactions":
+                if failing_table == "transactions_velocity":
+                    t_mock.select.return_value.eq.return_value.gte.return_value.execute.side_effect = RuntimeError("statement timeout")
+                else:
+                    exec_mock = MagicMock()
+                    exec_mock.data = [{"id": f"tx{i}"} for i in range(tx_count)]
+                    t_mock.select.return_value.eq.return_value.gte.return_value.execute.return_value = exec_mock
+                if failing_table == "transactions_recipient":
+                    t_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.side_effect = RuntimeError("deadlock detected")
+                else:
+                    rec_mock = MagicMock()
+                    rec_mock.data = []
+                    t_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = rec_mock
+            elif name == "fraud_assessments":
+                insert_mock = MagicMock()
+                insert_mock.execute.return_value.data = [{"id": "assessment-should-not-exist"}]
+                t_mock.insert.return_value = insert_mock
+            return t_mock
+
+        mock_supabase.table.side_effect = table_side_effect
+        return mock_supabase
+
+    def _payload(self):
+        return {
+            "account_id": "00000000-0000-0000-0000-000000000001",
+            "amount": 60_000_000,  # Rs 600,000: over the large-amount threshold
+            "currency": "PKR",
+            "profile_id": None,
+            "transaction_context": {"destination_account_id": "00000000-0000-0000-0000-000000000002"},
+        }
+
+    @patch("main.get_supabase_client")
+    def test_velocity_query_failure_fails_closed(self, mock_get_client):
+        mock_get_client.return_value = self._client_with_failing("transactions_velocity")
+        response = self.client.post("/assess-fraud", json=self._payload())
+        # Before the fix this was 200 / approved=true / score 30.
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("transaction velocity", response.json()["detail"])
+        self.assertNotIn("approved", response.json())
+
+    @patch("main.get_supabase_client")
+    def test_recipient_history_failure_fails_closed(self, mock_get_client):
+        mock_get_client.return_value = self._client_with_failing("transactions_recipient")
+        response = self.client.post("/assess-fraud", json=self._payload())
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("recipient history", response.json()["detail"])
+
+    @patch("main.get_supabase_client")
+    def test_account_holds_failure_fails_closed(self, mock_get_client):
+        # A missed full freeze is the most serious miss this service can make,
+        # so it is fatal even though the status check above is redundant with it.
+        mock_get_client.return_value = self._client_with_failing("account_holds")
+        response = self.client.post("/assess-fraud", json=self._payload())
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("account freeze holds", response.json()["detail"])
+
+    @patch("main.get_supabase_client")
+    def test_failure_response_carries_no_assessment_id(self, mock_get_client):
+        # n8n's fraud gate requires approved == true AND fraud_assessment_id to
+        # exist. A failure must supply neither, or the gate would let it through.
+        mock_get_client.return_value = self._client_with_failing("transactions_velocity")
+        body = self.client.post("/assess-fraud", json=self._payload()).json()
+        self.assertNotIn("fraud_assessment_id", body)
+        self.assertNotIn("risk_score", body)
+
+    @patch("main.get_supabase_client")
+    def test_all_rules_evaluable_still_scores_normally(self, mock_get_client):
+        # The guard must not have made the happy path unavailable: 9 transactions
+        # in the window (50) plus Rs 600,000 (30) is 80, which is blocked on merit.
+        mock_get_client.return_value = self._client_with_failing(None, tx_count=9)
+        response = self.client.post("/assess-fraud", json=self._payload())
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["approved"])
+        self.assertEqual(body["risk_score"], 95.0)
+
 
 class TestInterestStatementsReconciliation(unittest.TestCase):
     """Covers the interest / statements / reconciliation half of the Python
@@ -334,6 +442,7 @@ class TestInterestStatementsReconciliation(unittest.TestCase):
         self.assertTrue(d["requires_human_attention"])
         self.assertEqual(d["system_drift"], 100)
         self.assertEqual(d["discrepancy_count"], 1)
+
 
 
 if __name__ == "__main__":

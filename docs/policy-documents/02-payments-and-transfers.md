@@ -69,29 +69,50 @@ If you genuinely want to send the same amount to the same person again, send a n
 
 | Item | Amount |
 |---|---|
-| Domestic transfer between Digital Bank accounts | **Free**, settled instantly |
-| International wire, daily limit per account | Rs 500,000 |
-| International wire fee | Rs 1,500 per outgoing wire |
-| Domestic wire within Pakistan | No fee, same business day if submitted before 3:00 PM PKT |
+| Transfer between Digital Bank accounts | **Free**, settled instantly |
 | Transfer above Rs 500,000 | Scored as high-value by our fraud engine and may be held for review |
 
-## 6. ATM fees
+We move money **between Digital Bank accounts only**. Every transfer here is a
+book transfer settled against our own ledger in a single database transaction,
+which is why it is free and why it arrives immediately rather than on a
+clearing cycle.
 
-| Where | Fee |
-|---|---|
-| Digital Bank ATMs | Free |
-| Partner network ATMs in Pakistan | Rs 25 per withdrawal |
-| Non-partner ATMs | Rs 50 per withdrawal |
+There is no daily cap and no per-transfer cap on what you may send within the
+bank, beyond your own available balance. A large transfer is not refused by a
+limit; it is **scored**, and may be held for a person to review (see the
+Security, Fraud and Disputes policy for the rules and the thresholds).
 
-## 6a. Account maintenance and service charges
+## 6. What we do not offer, and what we charge
 
-**There is no account maintenance fee, no monthly or annual service charge, no
-minimum-balance fee, no dormancy fee and no account-closure fee.** Holding an
-account with us costs nothing.
+Stated plainly, so that nobody plans around a service that is not here:
 
-The tables in sections 5 and 6 above are the complete list of charges this bank
-makes. **If a charge is not listed in this document, we do not make it.** We will
-not introduce a charge and apply it to an existing account without telling you
+- **No cash, no cards and no ATMs.** There is no Digital Bank card, no ATM
+  network and no way to withdraw cash.
+- **No payments to or from other banks.** We cannot send money to an account
+  held at another institution, in Pakistan or anywhere else, and we cannot
+  receive one.
+- **No international wires and no foreign currency.** Every account is in PKR
+  (see section 9).
+- **No overdrafts and no credit cards.** See the Accounts and the Borrowing
+  policies.
+
+Because none of those exist here, none of them carries a fee.
+
+**What we charge: nothing.** There is no account maintenance fee, no monthly or
+annual service charge, no minimum-balance fee, no dormancy fee, no transfer fee
+and no account-closure fee. Holding and using an account with Digital Bank costs
+nothing.
+
+The only amounts ever taken out of your account are:
+
+1. money you asked us to transfer,
+2. a loan repayment collected by the standing order created when your loan was
+   disbursed (see the Borrowing and Deposits policy),
+3. money returned to someone else because a dispute against you was upheld (see
+   the Security, Fraud and Disputes policy).
+
+**If a charge is not listed in this document, we do not make it.** We will not
+introduce a charge and apply it to an existing account without telling you
 first.
 
 ## 7. Standing orders (recurring payments)

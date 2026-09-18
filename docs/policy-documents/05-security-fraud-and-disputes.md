@@ -43,6 +43,10 @@ An assessment is valid for **10 minutes** and can only be used once. This is why
 
 **If the fraud service is unavailable, the transfer is held, not approved.** The system fails safe: an ambiguous answer about risk always resolves to *don't move the money*. It never fails open.
 
+That applies to the individual rules too, not just to the service as a whole. If any one of the four rules cannot be checked — a database timeout while counting your recent transactions, for example — no score is produced at all and the transfer is held. A rule we could not evaluate is never treated as a rule you passed.
+
+**A technical fault will not freeze your account.** A held transfer and a fraud freeze are different things: a freeze follows a real score of 75 or above, and needs a person to lift it. When our own checks fail to run, the transfer simply does not go through and you can try again.
+
 ## 4. Fraud holds and freezes
 
 When a transfer scores 75 or above, we place a **full freeze** on the account automatically. While frozen:

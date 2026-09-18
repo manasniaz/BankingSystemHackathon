@@ -23,7 +23,7 @@ Email us asking to deposit an amount into your account.
 
 A deposit is credited immediately, with no human approval step.
 
-**Why the caps:** a deposit claimed in an email is unverifiable — there is no cash, no cheque and no incoming wire behind it in this system. Rather than escalate every deposit to a person, which would make the feature useless, we bound how much damage an unverifiable claim can do. A request over the cap is refused with the limit stated, not partially fulfilled.
+**Why the caps:** a deposit claimed in an email is unverifiable — there is no cash, no cheque and no incoming wire behind it in this system. Rather than escalate every deposit to a person, which would make the feature useless, we bound how much damage an unverifiable claim can do. A request over the cap is refused with the limit stated, not partially fulfilled. There is no branch or other channel for a larger deposit; the cap is the cap.
 
 ## 3. Loans
 
@@ -35,7 +35,7 @@ Digital Bank offers personal loans to existing account holders by email.
 | Loan term | 1 to 60 months |
 | Instant approval | Up to **Rs 200,000** |
 | Human review | Above Rs 200,000, up to **Rs 2,000,000** |
-| Maximum by email | Rs 2,000,000 — above that requires a branch visit |
+| Maximum we will lend | Rs 2,000,000 |
 | Concurrent loans | **One at a time** per customer |
 
 ### How to apply
@@ -52,7 +52,7 @@ If you don't state a term we assume **12 months**. Terms can be given in days, w
 
 **Above Rs 200,000** — the application is recorded and referred to our credit review team. You get an email confirming the figures and telling you it's under review, then a second email with the decision, usually within one business day. Nothing is disbursed until a person has approved it.
 
-**Above Rs 2,000,000** — refused by email, with an explanation that a branch visit is required.
+**Above Rs 2,000,000** — refused, with the maximum stated. Rs 2,000,000 is the most this bank will lend: email is our only channel, so there is no branch to refer you to and no larger facility to apply for.
 
 ### Worked example
 

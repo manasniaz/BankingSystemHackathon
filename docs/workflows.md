@@ -16,6 +16,17 @@ The full operator manual (credentials, import/activation order, real Gmail test 
 
 **Invitation expiry sweep (folded into WF-00)**: a parallel branch off the Gmail Trigger node calls `expire_stale_joint_invitations()` on every real incoming email and notifies any inviter whose invitation expired. See `decisions.md` Session 4 for why this replaced the standalone WF-08 scheduler.
 
+## Session 13 changes (2026-09-17)
+
+### A first-time sender now gets instructions, not a security notice
+
+`Send Unregistered Email Response` used to read back the sender's own address and mention sending from a registered one. It is now a welcome: how to open an account in a single email, the twelve things the bank can be asked to do with the exact wording for each, and what the bank will never ask for. The same panel is carried by `Send New Account Welcome Email` and by the unrecognised-request reply, so it is one block of text with one place to change it.
+
+### Two dead ends closed
+
+- **A reply that answers our own question.** `Extract New Sender Intent` now sets `isContinuation` when a reply supplies a detail the bank asked for (a date of birth, or a guardian address) and the message carries no intent words of its own. Found in execution 418, where an applicant replied `20/9/2000` and was told the bank did not recognise their address. Gated on the message actually being a reply, so a first-time stranger mentioning a date is not enrolled.
+- **The catch-all.** `Route by Intent` output 13 led to a terminal node that promised a human review nobody was told about. It now chains to `Alert Ops - Unrecognised Request`, which carries the customer's original wording to the operations mailbox. That node reads `$('Node').first().json` rather than `$json`, because it follows a Gmail node whose output is the send receipt.
+
 ## Changes made in the 2026-09-14 review
 
 - **WF-00, WF-01, WF-04**: each had a newer, safer draft sitting unpublished in the n8n editor — the *live* version had hardcoded fallback account/profile/fraud-assessment IDs that activated on malformed input instead of rejecting the request. Republished all three to their improved drafts.

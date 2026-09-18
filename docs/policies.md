@@ -31,7 +31,7 @@ An account can only be closed once its balance is exactly Rs 0.00 and it has no 
 
 ### `doc_wire_transfer_policy` — Wire Transfer Policy
 
-International wire transfers have a daily limit of Rs 500,000 per account for verified customers, with a flat fee of Rs 1,500 per outgoing international wire. Domestic wire transfers within Pakistan have no fee and are processed the same business day if submitted before 3:00 PM PKT.
+**Superseded, and it was never true.** This described international and domestic wire transfers, a daily limit and a per-wire fee. The bank has none of those: it moves money only between Digital Bank accounts, charges nothing, and enforces no daily limit. The live policy is [`policy-documents/02-payments-and-transfers.md`](policy-documents/02-payments-and-transfers.md) sections 5 and 6.
 
 ### `doc_overdraft_policy` — Overdraft Policy
 
@@ -39,7 +39,7 @@ Digital Bank does not offer overdraft facilities on checking or savings accounts
 
 ### `doc_atm_fees` — ATM Fee Policy
 
-ATM withdrawals at Digital Bank-branded ATMs are free of charge. Withdrawals at partner network ATMs within Pakistan incur a Rs 25 fee per transaction. Withdrawals at non-partner ATMs incur a Rs 50 fee per transaction.
+**Superseded, and it was never true.** There are no Digital Bank ATMs, no card and no cash withdrawal anywhere in this system, so there is nothing to charge for. See [`policy-documents/02-payments-and-transfers.md`](policy-documents/02-payments-and-transfers.md) section 6.
 
 ### `doc_standing_orders_policy` — Standing Order Policy
 
@@ -47,7 +47,7 @@ Recurring standing order payments are checked hourly and executed automatically 
 
 ### `doc_dispute_fraud_policy` — Dispute and Fraud Policy
 
-If a transaction was unauthorized or fraudulent, reply to our email immediately with the transaction date, amount, and recipient. Our fraud team places an immediate hold on suspicious activity pending investigation. Disputes are typically reviewed within 3-5 business days.
+If a transaction was unauthorized or fraudulent, reply to our email immediately with the transaction date, amount, and recipient. Our fraud team places an immediate hold on suspicious activity pending investigation. **Superseded:** the live policy is a decision by a human specialist, normally within one business day. See `policy-documents/05-security-fraud-and-disputes.md`.
 
 ### `doc_fraud_scoring_policy` — Fraud Scoring Policy
 
@@ -59,7 +59,7 @@ Digital Bank reconciles its full ledger every night at midnight UTC, verifying t
 
 ### `doc_deposit_policy` — Deposit Policy
 
-Customers may deposit funds into their account by email. Self-service deposits are limited to Rs 50,000 per request and no more than 3 deposits per account in a rolling 24-hour period. Larger deposits require visiting a branch.
+Customers may deposit funds into their account by email. Self-service deposits are limited to Rs 50,000 per request and no more than 3 deposits per account in a rolling 24-hour period. **Superseded:** there is no branch. A request over the cap is simply refused with the limit stated.
 
 ### `doc_loan_policy` — Loan Policy
 

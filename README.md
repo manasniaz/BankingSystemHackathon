@@ -520,7 +520,7 @@ Send each of these to the Bank Gmail address you were given privately.
 * **Subject**: `Wire Transfer Policy Question`
 * **Body**:
   ```text
-  What are the daily limits and fee structures for international wire transfers?
+  Do you pay interest on a savings account, and what is the rate?
   ```
 * **System Execution**:
   1. `WF-00` routes to `WF-04 RAG Support` (works even from an email address with no bank account).

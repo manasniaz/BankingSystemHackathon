@@ -120,6 +120,11 @@ def assess_fraud(payload: AssessFraudRequest):
     
     Score >= 75.0 -> Not approved.
     Writes result to Supabase fraud_assessments table before returning.
+
+    Fails closed. If any rule's query fails, no score is produced and the
+    response is 503: an unevaluated rule is not a passed rule. Only rule 1's
+    account lookup is fatal on its own, because without it there is nothing to
+    assess at all.
     """
     supabase = get_supabase_client()
     
@@ -128,6 +133,12 @@ def assess_fraud(payload: AssessFraudRequest):
     context = payload.transaction_context or {}
 
     flags = []
+
+    # A rule that could not be evaluated is not a rule that passed. Each rule
+    # below records its own name here if its query fails; nothing is scored or
+    # approved while this list is non-empty. See the failure note before the
+    # score calculation for why this raises rather than scoring 100.
+    unevaluated = []
 
     # -------------------------------------------------------------------------
     # RULE 1: Account Status Rule
@@ -182,7 +193,12 @@ def assess_fraud(payload: AssessFraudRequest):
                 reason="Account has active full freeze hold"
             )
     except Exception as e:
-        logger.warning(f"Error checking account_holds for account_id {account_id}: {e}")
+        # Redundant with the status check above today, because place_account_hold()
+        # also sets accounts.status = 'frozen'. Treated as fatal anyway: a missed
+        # full freeze is the most serious thing this service can get wrong, and
+        # "redundant today" is precisely the assumption that breaks quietly later.
+        logger.error(f"Error checking account_holds for account_id {account_id}: {e}")
+        unevaluated.append("account freeze holds")
 
     # -------------------------------------------------------------------------
     # RULE 2: Velocity Rule (> 5 transactions in last 60 minutes)
@@ -204,6 +220,7 @@ def assess_fraud(payload: AssessFraudRequest):
             flags.append(f"High velocity ({tx_count} transactions in last 60m)")
     except Exception as e:
         logger.error(f"Error checking transaction velocity for account_id {account_id}: {e}")
+        unevaluated.append("transaction velocity")
 
     # -------------------------------------------------------------------------
     # RULE 3: Large Amount Rule (amount > 50,000,000 paisa / Rs 500,000)
@@ -239,6 +256,31 @@ def assess_fraud(payload: AssessFraudRequest):
                 flags.append("New recipient (no prior completed transfers from this account)")
         except Exception as e:
             logger.error(f"Error checking recipient history for destination {destination_account_id}: {e}")
+            unevaluated.append("recipient history")
+
+    # -------------------------------------------------------------------------
+    # FAIL CLOSED: refuse to score at all if any rule could not be evaluated.
+    #
+    # Every rule is attempted first, so the error names all of them rather than
+    # only the first to fail -- which is the difference between a diagnosable
+    # incident and a guess.
+    #
+    # 503 rather than a score of 100. A 100 would block this transfer AND, via
+    # WF-03's freeze-at-75, lock the customer out of their account until a human
+    # intervened -- turning a momentary database error into a support incident
+    # for someone who did nothing wrong. A 503 has no `approved` field and no
+    # `fraud_assessment_id`, which is exactly what n8n's fraud gate requires, so
+    # the transfer is held, nothing is frozen, and a retry can succeed.
+    # -------------------------------------------------------------------------
+    if unevaluated:
+        detail = ("Fraud assessment incomplete: could not evaluate " +
+                  ", ".join(unevaluated) +
+                  ". No score was produced and the transfer must not proceed.")
+        logger.error(f"Failing closed for account {account_id}: {detail}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+        )
 
     # -------------------------------------------------------------------------
     # RISK SCORE CALCULATION (0 - 100)

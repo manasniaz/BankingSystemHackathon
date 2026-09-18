@@ -180,7 +180,7 @@ The database identifies customers by their registered email in the `profiles` ta
 - **From**: Any Gmail address, registered or not
 - **To**: Bank Gmail
 - **Subject**: "Wire Transfer Policy Inquiry"
-- **Body**: "What are the wire transfer fee policies and daily limits?"
+- **Body**: "Do you pay interest on a savings account, and what is the rate?"
 - **Expected Result**:
   - `WF-00` routes to `WF-04 RAG Support`.
   - LangChain agent searches Pinecone index `banking-policy-index`, finds `doc_wire_transfer_policy`.

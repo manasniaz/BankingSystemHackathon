@@ -24,3 +24,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local-only files that contain real addresses or live values.
+# This repository is public; nothing in here is ever committed.
+private/
