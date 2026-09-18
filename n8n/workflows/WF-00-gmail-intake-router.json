@@ -890,10 +890,10 @@
     },
     {
       "parameters": {
-        "sendTo": "={{ $('Resolve Transfer Target & Authorize').item.json.fromEmail }}",
-        "subject": "=RE: {{ $('Resolve Transfer Target & Authorize').item.json.subject }} - Transfer Not Completed",
+        "sendTo": "={{ $('Resolve Transfer Target & Authorize').first().json.fromEmail }}",
+        "subject": "=RE: {{ $('Resolve Transfer Target & Authorize').first().json.subject }} - Transfer Not Completed",
         "emailType": "text",
-        "message": "=Hello {{ $('Resolve Transfer Target & Authorize').item.json.full_name }},\n\nYour transfer request could not be completed.\n\nOur security checks did not clear this transaction. This can happen when the transaction is flagged as unusual, or when our verification service is temporarily unavailable.\n\nNo funds have been moved from your account. Please contact support if you believe this is an error.\n\nDigital Bank Security Team",
+        "message": "=Hello {{ $('Resolve Transfer Target & Authorize').first().json.full_name }},\n\nYour transfer request could not be completed.\n\nOur security checks did not clear this transaction. This can happen when the transaction is flagged as unusual, or when our verification service is temporarily unavailable.\n\nNo funds have been moved from your account. Please contact support if you believe this is an error.\n\nDigital Bank Security Team",
         "options": {
           "appendAttribution": false
         }
@@ -7024,6 +7024,116 @@
           "name": "Gmail account"
         }
       }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "score-exists",
+              "leftValue": "={{ $json.risk_score }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "score-high",
+              "leftValue": "={{ $json.risk_score }}",
+              "rightValue": 75,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9b31d7e4-6a08-4c52-8f19-3d7e05b2c184",
+      "name": "Freeze Account For Fraud?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3400,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://qesrdltnvsdkjtaastkb.supabase.co/rest/v1/rpc/place_account_hold",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_account_id: $('Resolve Transfer Target & Authorize').first().json.source_account_id, p_hold_type: 'fraud_investigation', p_is_full_freeze: true, p_amount_held: $('Resolve Transfer Target & Authorize').first().json.amount, p_reason: 'Fraud hold: ' + ($('Call Python Fraud Service').first().json.reason || 'score at or above 75'), p_placed_by_profile_id: null }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "c4f08a91-52b7-4e36-9d15-8a27e6b03fd2",
+      "name": "Place Account Freeze Hold",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3608,
+        800
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "tJhpbtV5Vin0bmon",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Resolve Transfer Target & Authorize').first().json.fromEmail }}",
+        "subject": "=RE: {{ $('Resolve Transfer Target & Authorize').first().json.subject }} - Transfer stopped and account frozen",
+        "emailType": "text",
+        "message": "=Hello {{ $('Resolve Transfer Target & Authorize').first().json.full_name }},\n\nWe stopped this transfer and placed a temporary freeze on the account it would have come from. No money has moved.\n\nOur fraud checks scored this transaction at {{ $('Call Python Fraud Service').first().json.risk_score }} out of 100, at or above the level where we stop and review rather than proceed. The reason recorded was: {{ $('Call Python Fraud Service').first().json.reason }}\n\nWHAT THE FREEZE MEANS\nWhile the account is frozen, no money can move in or out of it and it cannot be closed. Your other accounts with us, if you have any, are unaffected.\n\nHOW TO GET IT LIFTED\nReply to this email and tell us what this payment was for. A person at the bank reviews every one of these. We cannot lift a freeze automatically, and we will not do it just because someone asks by email -- that is the whole point of it. If this was a legitimate payment, say so and it will be released.\n\nIf this was NOT you, say that instead and reply straight away. The freeze is already protecting the account in the meantime.\n\nDigital Bank Security Team",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "1a6e93c5-0d74-48fb-b295-5c8f7134ae60",
+      "name": "Send Account Frozen Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        3816,
+        800
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -7265,7 +7375,7 @@
         ],
         [
           {
-            "node": "Send Fraud Block Email",
+            "node": "Freeze Account For Fraud?",
             "type": "main",
             "index": 0
           }
@@ -9248,6 +9358,35 @@
         [
           {
             "node": "Ask Which Account Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Freeze Account For Fraud?": {
+      "main": [
+        [
+          {
+            "node": "Place Account Freeze Hold",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Fraud Block Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Place Account Freeze Hold": {
+      "main": [
+        [
+          {
+            "node": "Send Account Frozen Email",
             "type": "main",
             "index": 0
           }

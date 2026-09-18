@@ -5,16 +5,30 @@ The full operator manual (credentials, import/activation order, real Gmail test 
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | WF-00 Gmail Front Door | Gmail Trigger (poll unread, every minute) | Resolves sender → profile, authorizes against `account_holders`, classifies intent and routes it. Customer intents: balance, statement, transfer (by account number **or** email address), deposit, loan application, loan cancellation, account opening, joint opening, closure, dispute, policy question, unauthorized access. Also carries the operations side: staff are identified from `bank_staff`, never from a hardcoded address, and can credit (administrator only), decide loans, rotate the pass phrase, remove an operator and list the pending queue. A question about how something works is never executed as an instruction. |
-| WF-01 Transfer | Sub-workflow + webhook (`/webhook/transfer`) | Validates the payload (no fallback defaults — a missing field is a rejected request), calls `execute_transfer()`, returns success/failure. |
+| WF-01 Transfer | Sub-workflow only | Validates the payload (no fallback defaults — a missing field is a rejected request), calls `execute_transfer()`, returns success/failure. |
 | WF-02 Standing Orders | Schedule (hourly) | Finds due orders, calls `execute_standing_order()`, retries up to 3 times, alerts ops on permanent failure. **Was broken on every run until 2026-09-15** — see Session 5 below. |
-| WF-03 Fraud Hold | Sub-workflow + webhook (`/webhook/assess-fraud`) | Calls the Python fraud microservice, places a full-account freeze via `place_account_hold()` on high risk, alerts ops. |
-| WF-04 RAG Support | Sub-workflow + webhook (`/webhook/support-case`) | LangChain agent (Groq + Pinecone + Gemini) drafts a grounded policy answer. Grounded + confident (≥0.7) + no human needed → sent to the customer directly. Below that bar → queues for a human, carrying the draft and its citations. Designed in Session 5, but the direct-send path was silently broken by two CHECK-constraint violations until Session 7 caught and fixed it with a live test. |
-| WF-05 Human Approval | Webhook (`/webhook/approve-draft`, `/webhook/approve-loan`) | Two independent webhook triggers in one workflow. `/approve-draft` handles only the RAG cases WF-04 couldn't confidently answer. `/approve-loan` (new, Session 7) lets an operator approve/reject a loan WF-00 queued as `pending_review` (amounts over Rs 200,000), calling `approve_loan`/`reject_loan` and emailing the customer either way. |
+| WF-03 Fraud Hold | **Retired (archived)** | Calls the Python fraud microservice, places a full-account freeze via `place_account_hold()` on high risk, alerts ops. |
+| WF-04 RAG Support | Sub-workflow only | LangChain agent (Groq + Pinecone + Gemini) drafts a grounded policy answer. Grounded + confident (≥0.7) + no human needed → sent to the customer directly. Below that bar → queues for a human, carrying the draft and its citations. Designed in Session 5, but the direct-send path was silently broken by two CHECK-constraint violations until Session 7 caught and fixed it with a live test. |
+| WF-05 Human Approval | **Retired (archived)** | Two independent webhook triggers in one workflow. `/approve-draft` handles only the RAG cases WF-04 couldn't confidently answer. `/approve-loan` (new, Session 7) lets an operator approve/reject a loan WF-00 queued as `pending_review` (amounts over Rs 200,000), calling `approve_loan`/`reject_loan` and emailing the customer either way. |
 | WF-06 Reconciliation | Schedule (midnight UTC) | Calls `run_reconciliation()`, alerts ops on any ledger discrepancy. Also runs `promote_minors_to_adult()` on the same schedule. |
 | WF-08 Joint Invitation Expiry Sweep | Schedule (every minute) — **deactivated** | Superseded: was burning ~1,440 n8n executions/day regardless of need. Kept, deactivated, for optional temporary use during a live demo. The same logic now runs opportunistically inside WF-00 (see below) at zero standing cost. |
 | WF-09 Seed Policy Documents | Manual/one-time utility | Seeds the policy knowledge base. The live path is `Sync From Drive Trigger`: it clears Pinecone namespace **`banking_policy_v2`**, reads the six documents in [`policy-documents/`](policy-documents/) out of a Google Drive folder, and re-seeds them — so a re-run **replaces** rather than appends. `README.md` and other non-policy files are skipped. The older Code-node branches seed namespace `banking_policy` and are kept only as a rollback target. |
 
 **Invitation expiry sweep (folded into WF-00)**: a parallel branch off the Gmail Trigger node calls `expire_stale_joint_invitations()` on every real incoming email and notifies any inviter whose invitation expired. See `decisions.md` Session 4 for why this replaced the standalone WF-08 scheduler.
+
+## Session 13, second pass (2026-09-18): two workflows retired, one safety control restored
+
+**WF-05 and WF-03 are archived.** Neither was reachable: their workflow IDs appeared nowhere but their own files. WF-00 calls WF-01 and WF-04 by Execute Sub-workflow and calls the Python fraud service over HTTP directly, so WF-03 sat between nothing and nothing.
+
+**WF-03 was not merely dead — it was load-bearing.** `place_account_hold()` is what freezes an account, and WF-03 was its only caller anywhere in the system. Because nothing invoked WF-03, **no account had ever been frozen automatically**, while the published policy told customers that a fraud score of 75 or above places a full freeze. The transfer was still blocked and the customer still emailed, so the visible half looked correct and the missing half was invisible.
+
+The freeze now lives in WF-00, on the fraud-failure branch: `Fraud Cleared?` → `Freeze Account For Fraud?` → `Place Account Freeze Hold` → `Send Account Frozen Email`. One fraud path instead of two, and the one that runs is complete.
+
+It is gated on a **real score of 75 or above**, not on "did not clear". The fail-closed 503 added earlier carries no `risk_score` precisely so that an infrastructure fault holds the transfer without punishing anyone; freezing on it would have reintroduced the harm that design avoided. The two outcomes get two different emails.
+
+**The last two unauthenticated webhooks are gone.** `/webhook/transfer` and `/webhook/support-case` were public and inert (`responseMode: responseNode` with no Respond node, so n8n errored at the trigger). Both workflows keep their Execute Workflow Trigger and are still reached from WF-00 — verified end to end after removal, with `parentExecutionId` confirming the sub-workflow chain still runs.
+
+**Live footprint: 7 workflows, 311 nodes.** The archived two remain in this repository as a record of what was built.
 
 ## Session 13 changes (2026-09-17)
 

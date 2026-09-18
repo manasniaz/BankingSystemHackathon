@@ -659,3 +659,25 @@ Its migration section also implied that eight migrations were all of them, when 
 **A real gap surfaced while verifying the RLS sentence rather than assuming it.** All 27 tables did have RLS enabled, so the claim was true — but three had it enabled with **no policy at all**: `bank_staff`, `staff_enrolment_attempts` and `staff_passphrase`. That is precisely the state migration 003 was written to eliminate, reintroduced by the operations work in migrations 027 and 028 and never noticed. Not a live vulnerability, since RLS with zero policies already denies `anon` and `authenticated` everything, but incidental rather than stated — and these are the last three tables in the schema that should rest on an unstated default: `staff_passphrase` holds the bcrypt credential granting operator access, and `bank_staff` decides who may credit an account from the treasury. Migration `035` gives all three the same explicit deny-all policy. Verified after applying: 27 tables, 27 with RLS, **0 with RLS but no policy**.
 
 Every table name written into `database.md` was checked back against `pg_class` in both directions — none invented, none missed — and the twelve-added-later list in architecture.md's note was derived by differencing against migration 001 rather than by memory. The README's RPC count was measured at the same time and corrected from 70 to 71.
+
+### Session 13, eighth pass: a dead workflow had taken a safety control with it
+
+The reported defect was that WF-05 is unreachable dead code. It is, and it is archived. The finding that mattered was the one next to it.
+
+**WF-03 was also unreachable — and unlike WF-05 it was load-bearing.** `place_account_hold()` is the function that freezes an account, and WF-03 was its only caller anywhere in the system: workflows, Python service, RPC bodies. WF-00 never invoked WF-03; it calls the Python fraud service over HTTP directly and, on a fraud failure, emailed the customer and stopped.
+
+So **no account has ever been frozen automatically**, while `05-security-fraud-and-disputes.md` section 4 told customers in detail that a score of 75 or above places a full freeze, that no money can move in or out while it lasts, and that only a human can lift it. None of that was happening.
+
+What makes this worth dwelling on is why it stayed invisible. The transfer *was* blocked, the customer *was* emailed, the fraud assessment *was* written to the database. Every observable behaviour looked right. The missing piece was an action nobody sees when it works — you only notice a freeze by trying to do something afterwards, and nobody had.
+
+It also quietly invalidated an argument I had made two passes earlier. When reweighting the fraud rules I reasoned that the threshold must not be lowered "because crossing it freezes the account until a human lifts it". That reasoning was sound and the conclusion still holds, but the premise was false at the time I wrote it — the freeze did not exist. It does now, which is the only reason the earlier argument is retrospectively correct rather than merely lucky.
+
+**Wired into WF-00 rather than reviving WF-03**, so there is one fraud path instead of two and the one that runs is complete. Gated on a real score of 75 or above rather than on "did not clear": the fail-closed 503 carries no `risk_score` precisely so an infrastructure fault holds the transfer without punishing the customer, and freezing on it would have reintroduced exactly the harm that design avoided. Both branches were tested with the hold pinned — a score of 95 places the freeze and sends the frozen email, a scorer fault sends the ordinary block email and `Place Account Freeze Hold` never executes.
+
+The frozen email says what the freeze means, that other accounts are unaffected, and that a person reviews every one — and states plainly that the bank will not lift it just because someone asks by email, which is the entire point of a hold the suspected party cannot clear.
+
+**The last two unauthenticated webhooks went with them.** `/webhook/transfer` and `/webhook/support-case` were public and inert; `/assess-fraud` left with WF-03. The system now has no unauthenticated HTTP entry point at all, which is what the design always claimed. Both workflows keep their Execute Workflow Trigger, and the chain was verified end to end afterwards rather than assumed: a policy question sent to WF-00 produced a WF-04 execution carrying `parentExecutionId`, proving sub-workflow invocation survives a workflow having no webhook trigger.
+
+The credential warning on adding the hold node was worth heeding rather than ignoring — n8n reported that HTTP Request nodes were skipped during credential auto-assignment, and a freeze that fails on authentication would be worse than no freeze, because the transfer is blocked either way and the account silently stays open. Set explicitly.
+
+**Live footprint is now 7 workflows and 311 nodes**, down from 9 and 358. Both archived workflows remain in the repository: archiving removes them from the running instance without destroying the record of what was built.

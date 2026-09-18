@@ -682,7 +682,7 @@ A `status` of `degraded` names the missing environment variable or the database 
 
 Five workflows expose unauthenticated public webhooks wired to live logic. **WF-05's `/webhook/approve-loan` was genuinely live** — it could approve a loan and disburse funds for anyone who knew the URL. WF-05 has been **unpublished**; both its paths now return 404, nothing referenced it, and everything it did is handled by the `OPS-` reference-code flow in WF-00.
 
-The remaining three (`/webhook/transfer`, `/assess-fraud`, `/support-case` on WF-01/03/04) are inert: each declares `responseMode: responseNode` with no Respond to Webhook node present, so n8n errors at the trigger before anything downstream runs. They should still be deleted — a bank whose only intended channel is email should not carry unauthenticated HTTP entry points to its transfer and fraud logic, working or not.
+**Done.** Those three are gone. `/webhook/transfer` and `/webhook/support-case` were removed from WF-01 and WF-04, which keep their Execute Workflow Trigger and are still reached from WF-00; `/assess-fraud` went with WF-03 when it was archived. The system now has **no unauthenticated HTTP entry points at all** — email is the only way in, which is what the design always claimed.
 
 Full history of what was checked, fixed, and resolved: [`docs/decisions.md`](docs/decisions.md).
 

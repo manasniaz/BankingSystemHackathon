@@ -14,23 +14,6 @@
     },
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "support-case",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "1dbca59b-c13c-44a8-9225-e00d54441921",
-      "name": "Webhook - New Support Request",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [
-        0,
-        208
-      ],
-      "webhookId": "wf-04-support-webhook"
-    },
-    {
-      "parameters": {
         "jsCode": "const inputData = $input.first().json;\nconst body = inputData.body || inputData;\nconst uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\n\n// Public RAG access: profile_id is optional. Anyone can ask a policy question;\n// a bank customer is simply recognized (profile_id set), everyone else is\n// tracked by their verified sender email only (customer_email).\nconst profileId = body.profile_id && uuidRegex.test(String(body.profile_id).trim()) ? String(body.profile_id).trim() : null;\n// Registered-customer calls from WF-00 pass the raw email metadata object\n// through (fromEmail), not the customer_email/inquiry field names -- accept\n// both so a real send-to address is always available downstream.\nconst customerEmail = String(body.customer_email || body.fromEmail || '').trim().toLowerCase();\n\nif (!profileId && !customerEmail) {\n  throw new Error('Either profile_id or customer_email is required to identify the inquirer');\n}\n\nconst subject = String(body.subject || '').trim();\n// Defensive fallback: if the body/inquiry text is empty (e.g. an email with\n// everything crammed into the subject line), fall back to the subject rather\n// than hard-failing the whole sub-workflow with no reply to the customer.\nconst inquiry = String(body.inquiry || body.bodyText || '').trim() || subject;\nif (!inquiry) {\n  throw new Error('inquiry text is required');\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    params: {\n      profile_id: profileId,\n      customer_email: customerEmail,\n      inquirer_type: profileId ? 'customer' : 'public',\n      subject: subject || 'General Banking Inquiry',\n      inquiry: inquiry\n    }\n  }\n}];"
       },
       "id": "71f8510f-be32-4a0d-b4ae-428735e405c3",
@@ -744,17 +727,6 @@
   ],
   "connections": {
     "Execute Workflow Trigger": {
-      "main": [
-        [
-          {
-            "node": "Validate Support Request Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Webhook - New Support Request": {
       "main": [
         [
           {
