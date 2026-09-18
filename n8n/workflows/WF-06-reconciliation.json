@@ -408,6 +408,78 @@
         }
       },
       "notes": "Safe to run every night even though interest is monthly: the accrual is keyed on (account_id, period_start) with a unique constraint, so only the first run after a month ends pays anything and every later run that month reports the accounts it skipped."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Every nightly RPC here runs with neverError: true, so a failure arrives as\n// DATA shaped like a normal response instead of stopping the workflow. Only\n// run_reconciliation's result was ever inspected. The rest could fail every\n// night and the first symptom would be a customer noticing.\n//\n// Read through $('Node').first().json rather than $json: this node sits at the\n// end of a chain, so $json is only ever the LAST rpc's response.\nconst CHECKS = [\n  ['promote_minors_to_adult', 'Execute Supabase RPC promote_minors_to_adult'],\n  ['expire_stale_ops_approvals', 'Expire Stale Ops Approvals'],\n  ['expire_stale_minor_account_requests', 'Expire Stale Guardian Requests'],\n  ['sweep_outstanding_debts', 'Sweep Outstanding Debts'],\n  ['accrue_monthly_interest', 'Accrue Monthly Interest']\n];\n\nfunction resultOf(nodeName) {\n  try {\n    return $(nodeName).first().json || {};\n  } catch (e) {\n    // A node that never ran is itself a failure worth reporting: it means the\n    // chain broke upstream and the later jobs silently did not happen.\n    return { __unreachable: String(e).slice(0, 200) };\n  }\n}\n\nconst failures = [];\nfor (const pair of CHECKS) {\n  const rpc = pair[0];\n  const result = resultOf(pair[1]);\n\n  if (result.__unreachable) {\n    failures.push(rpc + ' -- did not run: ' + result.__unreachable);\n    continue;\n  }\n  // PostgREST reports a failure as {code, message, details, hint}. A healthy\n  // RPC return value never carries `message` at the top level.\n  if (result.code || result.message) {\n    failures.push(rpc + ' -- ' + (result.message || result.code) +\n                  (result.hint ? ' (hint: ' + result.hint + ')' : ''));\n  } else if (result.success === false) {\n    failures.push(rpc + ' -- ' + (result.error || 'returned success: false'));\n  }\n}\n\nreturn [{ json: {\n  anyFailed: failures.length > 0,\n  failureCount: failures.length,\n  failures: failures.join('\\n'),\n  checked: CHECKS.length\n} }];"
+      },
+      "id": "7e1c9a52-3b84-4d17-a0f6-91cbb2e4d5a8",
+      "name": "Check Nightly Maintenance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "any-failed",
+              "leftValue": "={{ $json.anyFailed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0d4f6b39-8c25-4e71-b3a9-27fd15e0c6b4",
+      "name": "Nightly Maintenance Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1648,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "ops-team@yourbank.example",
+        "subject": "=Nightly maintenance: {{ $json.failureCount }} of {{ $json.checked }} jobs failed",
+        "emailType": "text",
+        "message": "=Tonight's scheduled maintenance did not complete cleanly. The reconciliation\nitself is reported separately; this covers the other jobs on the same run.\n\nWHAT FAILED\n{{ $json.failures }}\n\nWHY IT MATTERS\n- sweep_outstanding_debts collects money customers owe the bank after an\n  upheld dispute. If it is failing, those debts are not being collected.\n- accrue_monthly_interest pays savings interest. If it is failing, customers\n  are not being paid what they are owed. It is safe to re-run: the accrual is\n  keyed on (account, period) and will not pay a month twice.\n- expire_stale_ops_approvals and expire_stale_minor_account_requests clear\n  requests nobody answered. If they are failing, stale requests stay open.\n- promote_minors_to_adult converts an account on the holder's 18th birthday.\n  If it is failing, a customer who turned 18 still cannot move their own money.\n\nThese jobs are idempotent and can be re-run by hand against Supabase once the\ncause is fixed. Nothing is lost by a missed night, but nothing catches up on\nits own either.",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "5a8e0f14-6d93-4b28-9c71-3e2ab7f60d19",
+      "name": "Alert Ops - Nightly Maintenance Failed",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1856,
+        700
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "IrWmPXzOkHIt9fdU",
+          "name": "Gmail account"
+        }
+      }
     }
   ],
   "connections": {
@@ -525,6 +597,40 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Accrue Monthly Interest": {
+      "main": [
+        [
+          {
+            "node": "Check Nightly Maintenance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Nightly Maintenance": {
+      "main": [
+        [
+          {
+            "node": "Nightly Maintenance Failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nightly Maintenance Failed?": {
+      "main": [
+        [
+          {
+            "node": "Alert Ops - Nightly Maintenance Failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     }
   },

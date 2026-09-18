@@ -600,3 +600,21 @@ The numbers are now named constants at the point of use rather than inline liter
 **Two tests, and one of them caught the change before I did.** An existing assertion of 95.0 for all three rules firing failed immediately on the reweighting and became 100.0 (125, capped), which is the test doing its job. Added: a large amount to a new recipient must now stop at exactly 75, and a large amount on its own must still be approved at 45 — the second being the half of the rule that is easy to lose sight of while tightening the first. 24 tests pass.
 
 **Not live until pushed.** Like the fail-closed fix, this is in the Railway-deployed service, so the live engine keeps the old weights until the next push.
+
+### Session 13, fifth pass: five nightly jobs nobody was watching
+
+The reported defect was that a failed interest accrual was silent. It was, but the scope was wrong: **five** of the six nightly RPCs were silent, not one.
+
+`run_reconciliation` has a `Passed?` branch and an ops alert. The other five — `promote_minors_to_adult`, `expire_stale_ops_approvals`, `expire_stale_minor_account_requests`, `sweep_outstanding_debts`, `accrue_monthly_interest` — all run with `neverError: true`, which converts a failure into ordinary data rather than stopping the workflow, and then nothing looked at that data. `accrue_monthly_interest` was terminal, so its response was discarded entirely.
+
+Two of them move money. `sweep_outstanding_debts` collects what a customer owes the bank after an upheld dispute; `accrue_monthly_interest` pays savings interest. Either could have failed every night indefinitely, and the first symptom would have been a customer asking why they had not been paid — which is the same failure mode as the reconciliation this workflow exists to run, one level up.
+
+One check node covers all five rather than five IF-and-alert pairs. What an operator needs at 3am is "did tonight's maintenance run clean", not five separate emails, and a single summary is also what makes a *pattern* of failures visible rather than five unrelated ones.
+
+Three failure shapes are recognised, because they are genuinely different things: PostgREST reports a database error as `{code, message, hint, details}`; an RPC that ran but refused returns `success: false` with its own reason; and a node that never executed at all means the chain broke upstream and everything after it silently did not happen. That last case is the one most worth catching and the easiest to miss, since an absent node throws on reference rather than returning anything.
+
+The check reads each result through `$('Node').first().json` rather than `$json`, because it sits at the end of a chain where `$json` is only ever the last RPC's response — the same trap that produced blank ops emails in an earlier session.
+
+**Both paths tested with every RPC pinned, so nothing ran for real.** A simulated PostgREST timeout on one job and a `success: false` on another produced exactly two findings out of five checked, correctly naming both, with the three healthy jobs ignored and the alert sent. An all-healthy run produced `anyFailed: false`, took the other branch, and did not send anything — the half that matters most, because an alert that cries wolf nightly is worse than no alert.
+
+The alert says what each failure actually costs rather than just naming the RPC, and states that the jobs are idempotent and safe to re-run by hand — so that the person reading it at 3am knows both how bad it is and what to do.
