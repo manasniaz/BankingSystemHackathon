@@ -51,7 +51,7 @@ If a transaction was unauthorized or fraudulent, reply to our email immediately 
 
 ### `doc_fraud_scoring_policy` — Fraud Scoring Policy
 
-Every transfer is automatically scored for fraud risk before execution. Risk factors include high transaction velocity (more than 5 transfers in 60 minutes), large transfer amounts (over Rs 500,000), and first-time transfers to a new recipient. Transactions scoring 75 or higher are blocked and the account is placed under a security hold pending human review.
+Every transfer is automatically scored for fraud risk before execution. Risk factors include high transaction velocity (more than 5 transfers in 60 minutes, +50), large transfer amounts (over Rs 500,000, +45), and first-time transfers to a new recipient (+30). No single factor reaches the 75 threshold on its own; any two do. Transactions scoring 75 or higher are blocked and the account is placed under a security hold pending human review.
 
 ### `doc_reconciliation_policy` — Reconciliation Policy
 

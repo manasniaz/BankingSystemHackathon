@@ -115,10 +115,11 @@ def assess_fraud(payload: AssessFraudRequest):
     Rules evaluated:
     1. Account status rule: Reject immediately if account is frozen or closed.
     2. Velocity rule: > 5 transactions from this account in the last 60 minutes -> High risk (+50 points).
-    3. Large amount rule: amount > 50,000,000 paisa (Rs 500,000) -> Elevated risk (+30 points).
-    4. New recipient rule: destination account has never received money from this account before -> Minor risk (+15 points).
+    3. Large amount rule: amount > 50,000,000 paisa (Rs 500,000) -> Elevated risk (+45 points).
+    4. New recipient rule: destination account has never received money from this account before -> Elevated risk (+30 points).
     
-    Score >= 75.0 -> Not approved.
+    Score >= 75.0 -> Not approved. No single rule reaches 75 on its own and
+    any two do: one signal is a flag, two signals are a stop.
     Writes result to Supabase fraud_assessments table before returning.
 
     Fails closed. If any rule's query fails, no score is produced and the
@@ -285,13 +286,27 @@ def assess_fraud(payload: AssessFraudRequest):
     # -------------------------------------------------------------------------
     # RISK SCORE CALCULATION (0 - 100)
     # -------------------------------------------------------------------------
+    # One signal is a flag; two signals are a stop. Every weight is below the
+    # 75 threshold on its own, and every pair of weights is at or above it.
+    #
+    # The threshold is deliberately NOT lowered to achieve this. Crossing 75
+    # places a full account freeze that only a human can lift, so a threshold
+    # low enough for velocity alone (50) to cross would lock a customer out for
+    # making six transfers in an hour. Raising the weights keeps each single
+    # signal survivable while closing the combinations that actually matter --
+    # notably a large amount to a never-paid recipient, which is the canonical
+    # account-takeover pattern and previously scored 45 and sailed through.
+    VELOCITY_POINTS = 50.0
+    LARGE_AMOUNT_POINTS = 45.0
+    NEW_RECIPIENT_POINTS = 30.0
+
     risk_score = 0.0
     if velocity_high_risk:
-        risk_score += 50.0
+        risk_score += VELOCITY_POINTS
     if large_amount_risk:
-        risk_score += 30.0
+        risk_score += LARGE_AMOUNT_POINTS
     if new_recipient_risk:
-        risk_score += 15.0
+        risk_score += NEW_RECIPIENT_POINTS
 
     risk_score = min(100.0, risk_score)
     approved = (risk_score < 75.0)

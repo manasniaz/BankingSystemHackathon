@@ -34,10 +34,12 @@ Four rules contribute to the score:
 |---|---|
 | Account is frozen, closed, or has an active hold | Score 100 — blocked outright |
 | More than 5 transactions in 60 minutes (velocity) | +50 |
-| Amount over Rs 500,000 | +30 |
-| Destination account never paid before | +15 |
+| Amount over Rs 500,000 | +45 |
+| Destination account never paid before | +30 |
 
 A total score of **75 or more** stops the transfer.
+
+The weights are set so that **one signal is a flag and two signals are a stop**. No single rule reaches 75 by itself, so an unusually large payment, or a busy hour, or a first payment to someone new, will each go through on their own. Any two of them together will not. A large amount to a recipient you have never paid before is the combination we are most concerned about, and it stops at exactly the threshold.
 
 An assessment is valid for **10 minutes** and can only be used once. This is why an all-signatures joint transfer is re-scored at the moment of its final approval rather than relying on the assessment from when it was requested.
 

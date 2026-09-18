@@ -583,3 +583,20 @@ The account-holds check is fatal too, even though it is redundant today: `place_
 **Five regression tests, and they were checked against the old code.** A regression test that passes both before and after a fix is worthless, so the fix was temporarily reverted and the tests re-run: all four failure cases failed against the original behaviour and pass against the corrected one. The fifth asserts the guard did not make the ordinary path unavailable — nine transactions in the window plus Rs 600,000 still scores 95 and is blocked on merit.
 
 **This one is not live yet.** Every other change this session went straight to n8n Cloud, but the fraud service is deployed to Railway from this repository, so the corrected scorer reaches production on the next push. Until then the live service still fails open on those three rules.
+
+### Session 13, fourth pass: no single fraud rule could stop anything
+
+The weights were 50 for velocity, 30 for a large amount, 15 for a never-paid recipient, against a threshold of 75. Nothing reached 75 alone, and only velocity plus a large amount reached it together. Two consequences, one cosmetic and one not:
+
+- The published line that a transfer above Rs 500,000 "may be held for review" was effectively never true on its own.
+- **A first-ever transfer of any size to a recipient the account had never paid scored 30 + 15 = 45 and was approved automatically.** That is the canonical account-takeover pattern — drain an account to a fresh destination — and it was the combination the engine saw least well. A Rs 10 crore first payment to a stranger went straight through.
+
+Reweighted to 50 / 45 / 30 with the threshold left at 75, which produces a rule that fits in one line: **one signal is a flag, two signals are a stop.** Verified by enumerating all eight combinations rather than trusting the arithmetic: every single signal is below the threshold (50, 45, 30) and every pair is at or above it (95, 80, 75). Two combinations moved from approved to stopped — velocity with a new recipient, 65 to 80, and a large amount with a new recipient, 45 to 75.
+
+**The threshold was deliberately not lowered instead.** Dropping it to 45 would have achieved "a large amount plus a new recipient stops" far more simply, and would also have made velocity alone (50) a stop. Crossing the threshold places a **full account freeze that only a human can lift**, so that setting would lock a customer out of their own money for making six transfers in an hour. Raising the weights keeps every single signal survivable and closes only the combinations that matter. The choice between the two is entirely about what crossing the line costs the customer, which is why the cheaper change was the wrong one.
+
+The numbers are now named constants at the point of use rather than inline literals, because they are a risk-appetite setting rather than a fact about the code, and they are published in four places that all had to move together: the scorer, the live `05` policy table, WF-09's legacy seed, and the superseded `policies.md`. The `02` payments table no longer says a large transfer "may be held" and instead states the condition under which it is.
+
+**Two tests, and one of them caught the change before I did.** An existing assertion of 95.0 for all three rules firing failed immediately on the reweighting and became 100.0 (125, capped), which is the test doing its job. Added: a large amount to a new recipient must now stop at exactly 75, and a large amount on its own must still be approved at 45 — the second being the half of the rule that is easy to lose sight of while tightening the first. 24 tests pass.
+
+**Not live until pushed.** Like the fail-closed fix, this is in the Railway-deployed service, so the live engine keeps the old weights until the next push.

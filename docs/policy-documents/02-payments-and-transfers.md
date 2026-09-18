@@ -70,7 +70,7 @@ If you genuinely want to send the same amount to the same person again, send a n
 | Item | Amount |
 |---|---|
 | Transfer between Digital Bank accounts | **Free**, settled instantly |
-| Transfer above Rs 500,000 | Scored as high-value by our fraud engine and may be held for review |
+| Transfer above Rs 500,000 | Scored as high-value by our fraud engine. Held for review if it is also going to a recipient you have not paid before |
 
 We move money **between Digital Bank accounts only**. Every transfer here is a
 book transfer settled against our own ledger in a single database transaction,

@@ -43,3 +43,38 @@ All three items previously listed here — standing-order weekend/holiday behavi
 Session 12 is the case for taking this seriously rather than listing it as a formality. `Execute WF-01 Transfer Sub-Workflow` was passing the fraud service's HTTP response to the transfer sub-workflow instead of the transfer, so **every transfer in the bank failed**, for weeks, while `initiate_transfer()` passed every RPC-level test that was thrown at it. The defect lived entirely in the gap that neither the RPC tests nor the static audit covers, and it surfaced to the customer as a polite, well-formatted, plausible rejection email.
 
 The static audit was extended after each incident and now catches the switch-fallback hazard automatically. It cannot catch a missing input mapping, because an Execute Sub-workflow node with no mapping is structurally valid — it just forwards the wrong items. A test that posts a synthetic email into the Gmail intake and asserts on the resulting execution is the missing piece.
+
+## Telling "the knowledge base is stale" apart from "the model returned nothing"
+
+These look identical from outside and have been confused twice, costing a round of
+uploads each time. A policy answer that comes back as
+
+    confidence 0.00 | rag_doc_ids [] | "could not find a clear, confirmed answer"
+
+means one of two completely different things:
+
+1. **The content genuinely is not in Pinecone.** Fix by re-uploading to Drive and
+   re-running WF-09's `Sync From Drive Trigger`.
+2. **The model returned an empty completion.** `openai/gpt-oss-safeguard-20b` does
+   this intermittently; `Parse Agent Draft Output` catches it and fails safe, which
+   is why the symptom is indistinguishable from a real miss.
+
+Tell them apart before doing anything:
+
+```
+get_workflow_execution(WF-04, <id>, nodeNames=["Parse Agent Draft Output"])
+```
+
+`parse_failed: true` with `raw_output: ""` is case 2 — retry the question before
+touching Drive. Anything else is case 1.
+
+To settle what Drive actually holds, without guessing from RAG answers, read the
+sync execution directly rather than the assistant's replies:
+
+```
+get_workflow_execution(WF-09, <id>, nodeNames=["Extract Document Text"])
+```
+
+That is the text Pinecone was seeded from. Comparing it against
+`docs/policy-documents/` answers "is the live knowledge base current?" definitively
+in one call, and is the only check that does.

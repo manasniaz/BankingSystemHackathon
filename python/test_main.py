@@ -202,7 +202,7 @@ class TestFraudService(unittest.TestCase):
     # momentary database error into a lockout for a customer who did nothing.
     # =========================================================================
 
-    def _client_with_failing(self, failing_table, tx_count=9, amount_large=True):
+    def _client_with_failing(self, failing_table, tx_count=9, seen_recipient=False):
         """A Supabase mock where exactly one table's query raises."""
         mock_supabase = MagicMock()
 
@@ -230,7 +230,7 @@ class TestFraudService(unittest.TestCase):
                     t_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.side_effect = RuntimeError("deadlock detected")
                 else:
                     rec_mock = MagicMock()
-                    rec_mock.data = []
+                    rec_mock.data = [{"id": "prior-tx"}] if seen_recipient else []
                     t_mock.select.return_value.eq.return_value.eq.return_value.eq.return_value.limit.return_value.execute.return_value = rec_mock
             elif name == "fraud_assessments":
                 insert_mock = MagicMock()
@@ -286,14 +286,43 @@ class TestFraudService(unittest.TestCase):
 
     @patch("main.get_supabase_client")
     def test_all_rules_evaluable_still_scores_normally(self, mock_get_client):
-        # The guard must not have made the happy path unavailable: 9 transactions
-        # in the window (50) plus Rs 600,000 (30) is 80, which is blocked on merit.
+        # The guard must not have made the happy path unavailable. All three rules
+        # fire here: velocity 50 + large 45 + new recipient 30 = 125, capped to 100.
         mock_get_client.return_value = self._client_with_failing(None, tx_count=9)
         response = self.client.post("/assess-fraud", json=self._payload())
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertFalse(body["approved"])
-        self.assertEqual(body["risk_score"], 95.0)
+        self.assertEqual(body["risk_score"], 100.0)
+
+    @patch("main.get_supabase_client")
+    def test_large_amount_to_new_recipient_is_stopped(self, mock_get_client):
+        # The gap this reweighting closed. Under the old 50/30/15 weights a
+        # first-ever transfer of ANY size to a never-paid recipient scored
+        # 30 + 15 = 45 and was approved automatically -- the canonical
+        # account-takeover pattern, and the one the engine saw least well.
+        # Now 45 + 30 = 75, exactly the threshold, and it stops.
+        mock_get_client.return_value = self._client_with_failing(None, tx_count=2)
+        response = self.client.post("/assess-fraud", json=self._payload())
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["risk_score"], 75.0)
+        self.assertFalse(body["approved"])
+        self.assertIn("High risk", body["reason"])
+
+    @patch("main.get_supabase_client")
+    def test_no_single_signal_stops_a_transfer(self, mock_get_client):
+        # The other half of the rule: one signal is a flag, not a stop. Crossing
+        # the threshold freezes the account and needs a human to lift it, so an
+        # unusually large payment on its own must not do that.
+        # Large amount only: 45, below 75.
+        mock_get_client.return_value = self._client_with_failing(
+            None, tx_count=2, seen_recipient=True)
+        response = self.client.post("/assess-fraud", json=self._payload())
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["risk_score"], 45.0)
+        self.assertTrue(body["approved"])
 
 
 class TestInterestStatementsReconciliation(unittest.TestCase):
